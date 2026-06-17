@@ -17,8 +17,11 @@ class Settings(BaseSettings):
     )
     raw_dir: Path = Field(default=PROJECT_ROOT / "raw", alias="LLM_WIKI_RAW_DIR")
     wiki_dir: Path = Field(default=PROJECT_ROOT / "wiki", alias="LLM_WIKI_WIKI_DIR")
+    port: int = Field(default=8010, alias="LLM_WIKI_PORT")
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o", alias="LLM_WIKI_MODEL")
+    max_file_bytes: int = Field(default=50_000_000, alias="LLM_WIKI_MAX_FILE_BYTES")
+    max_output_tokens: int = Field(default=6000, alias="LLM_WIKI_MAX_OUTPUT_TOKENS")
 
     model_config = SettingsConfigDict(
         env_file=".env",

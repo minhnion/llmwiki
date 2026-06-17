@@ -147,9 +147,12 @@ This repository currently has a Python/FastAPI backend scaffold, SQLite-first pr
 Use `uv` as the preferred local runner:
 
 - Install/sync dependencies: `uv sync --extra dev`
-- Run API: `uv run uvicorn backend.app.main:app --reload --port 8010`
-- Run tests: `uv run pytest`
-- Run lint: `uv run ruff check .`
+- Run API: `uv run python -m backend.app.cli serve --reload`
+- Run migrations: `uv run python -m backend.app.cli db migrate`
+- Register a source: `uv run python -m backend.app.cli sources register raw/sources/example.pdf --title "Example PDF" --type pdf`
+- Ingest a source: `uv run python -m backend.app.cli sources ingest src_your_source_id`
+- Run tests: `uv run --extra dev pytest`
+- Run lint: `uv run --extra dev ruff check .`
 - Compile check: `python3 -m compileall backend`
 
 If `uv` is unavailable, use `python3 -m venv .venv`, activate it, then run `pip install -e ".[dev]"`. This fallback requires `python3-venv` on Debian/Ubuntu systems.

@@ -5,7 +5,15 @@ from backend.app.domain.models import EvidenceItem, SourceRef, WikiPage
 
 class SourceRepository(ABC):
     @abstractmethod
-    def add(self, source: SourceRef) -> None:
+    def add(self, source: SourceRef) -> SourceRef:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get(self, source_id: str) -> SourceRef | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list(self) -> list[SourceRef]:
         raise NotImplementedError
 
 

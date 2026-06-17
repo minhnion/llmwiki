@@ -18,6 +18,27 @@ raw/sources/*
 raw/attachments/*
 !raw/sources/.gitkeep
 !raw/attachments/.gitkeep
+wiki/log.md
+wiki/sources/*
+wiki/entities/*
+wiki/concepts/*
+wiki/events/*
+wiki/methods/*
+wiki/datasets/*
+wiki/claims/*
+wiki/contradictions/*
+wiki/synthesis/*
+wiki/queries/*
+!wiki/sources/.gitkeep
+!wiki/entities/.gitkeep
+!wiki/concepts/.gitkeep
+!wiki/events/.gitkeep
+!wiki/methods/.gitkeep
+!wiki/datasets/.gitkeep
+!wiki/claims/.gitkeep
+!wiki/contradictions/.gitkeep
+!wiki/synthesis/.gitkeep
+!wiki/queries/.gitkeep
 
 # Frontend
 node_modules/
