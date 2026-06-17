@@ -38,3 +38,22 @@ class WikiLogWriter:
                 f"- source_id: `{source_id}`\n"
                 f"- page: `{page_path}`\n"
             )
+
+    def append_query_answered(
+        self,
+        timestamp: str,
+        query_id: str,
+        question: str,
+        confidence: str,
+        citation_count: int,
+    ) -> None:
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.log_path.exists():
+            self.log_path.write_text("# Wiki Log\n\n", encoding="utf-8")
+        with self.log_path.open("a", encoding="utf-8") as file:
+            file.write(
+                f"\n## [{timestamp}] query | {query_id}\n\n"
+                f"- question: {question}\n"
+                f"- confidence: `{confidence}`\n"
+                f"- citations: {citation_count}\n"
+            )

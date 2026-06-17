@@ -4,7 +4,7 @@ General-purpose LLM Wiki chatbot experiment. The project starts SQLite-first and
 
 ## Current Status
 
-Source registry and OpenAI multimodal ingest are implemented. Query, graph browsing, and frontend features will be implemented incrementally.
+Source registry, OpenAI multimodal ingest, and source-grounded query synthesis are implemented. Graph browsing, eval workflows, and frontend features will be implemented incrementally.
 
 ## Quick Start
 
@@ -72,6 +72,29 @@ Expected ingest outputs:
 - ignored runtime `wiki/log.md` gets an ingest entry
 - SQLite stores evidence, claims, entities, review items, wiki page metadata, and FTS rows
 
+Ask a question against the ingested wiki/evidence store:
+
+```bash
+uv run python -m backend.app.cli query ask "How is LLM Wiki different from traditional RAG?"
+```
+
+Use JSON output for inspection or eval scripts:
+
+```bash
+uv run python -m backend.app.cli query ask \
+  "How is LLM Wiki different from traditional RAG?" \
+  --mode deep \
+  --max-evidence 8 \
+  --json
+```
+
+Expected query outputs:
+
+- answer synthesized from selected source-grounded evidence
+- citation list with source title, locator, and evidence ID
+- `query_runs` and `query_citations` rows in SQLite
+- ignored runtime `wiki/log.md` gets a query entry
+
 API equivalents:
 
 ```bash
@@ -81,6 +104,10 @@ curl -X POST http://127.0.0.1:8010/api/sources/register \
 
 curl -X POST http://127.0.0.1:8010/api/sources/src_your_source_id/ingest
 curl http://127.0.0.1:8010/api/sources
+
+curl -X POST http://127.0.0.1:8010/api/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"How is LLM Wiki different from traditional RAG?","mode":"deep"}'
 ```
 
 Run tests:

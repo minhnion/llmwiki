@@ -190,6 +190,41 @@ MIGRATIONS: tuple[Migration, ...] = (
         CREATE INDEX IF NOT EXISTS idx_wiki_pages_source_id ON wiki_pages(source_id);
         """,
     ),
+    Migration(
+        version=3,
+        name="query_runs",
+        sql="""
+        CREATE TABLE IF NOT EXISTS query_runs (
+            id TEXT PRIMARY KEY,
+            question TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            answer TEXT NOT NULL,
+            confidence TEXT NOT NULL,
+            candidate_count INTEGER NOT NULL,
+            selected_evidence_count INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            plan_json TEXT NOT NULL,
+            ranking_json TEXT NOT NULL,
+            result_json TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS query_citations (
+            query_id TEXT NOT NULL,
+            evidence_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            locator TEXT NOT NULL,
+            quote_or_summary TEXT NOT NULL,
+            claim_ids_json TEXT NOT NULL DEFAULT '[]',
+            PRIMARY KEY (query_id, evidence_id),
+            FOREIGN KEY (query_id) REFERENCES query_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_query_runs_created_at ON query_runs(created_at);
+        CREATE INDEX IF NOT EXISTS idx_query_citations_source_id ON query_citations(source_id);
+        CREATE INDEX IF NOT EXISTS idx_query_citations_evidence_id
+        ON query_citations(evidence_id);
+        """,
+    ),
 )
 
 

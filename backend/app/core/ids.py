@@ -33,3 +33,7 @@ def review_item_id(source_id: str, title: str, body: str, index: int) -> str:
 
 def wiki_page_id(source_id: str) -> str:
     return f"page_{stable_hash(source_id, 'source', length=20)}"
+
+
+def query_run_id() -> str:
+    return f"qry_{uuid4().hex[:16]}"

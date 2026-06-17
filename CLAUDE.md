@@ -140,7 +140,7 @@ Measure correctness, faithfulness, citation quality, contradiction handling, lat
 
 ## Current Repo State
 
-This repository currently has a Python/FastAPI backend scaffold, SQLite-first project layout, placeholder frontend folder, and generated wiki/raw/data directories.
+This repository currently has a Python/FastAPI backend, SQLite migrations, source registry, OpenAI multimodal ingest, SQLite FTS query retrieval, LLM evidence reranking, answer synthesis with citations, placeholder frontend folder, and generated wiki/raw/data directories.
 
 ## Project Commands
 
@@ -151,6 +151,8 @@ Use `uv` as the preferred local runner:
 - Run migrations: `uv run python -m backend.app.cli db migrate`
 - Register a source: `uv run python -m backend.app.cli sources register raw/sources/example.pdf --title "Example PDF" --type pdf`
 - Ingest a source: `uv run python -m backend.app.cli sources ingest src_your_source_id`
+- Ask a query: `uv run python -m backend.app.cli query ask "How is LLM Wiki different from traditional RAG?"`
+- Ask a query as JSON: `uv run python -m backend.app.cli query ask "How is LLM Wiki different from traditional RAG?" --json`
 - Run tests: `uv run --extra dev pytest`
 - Run lint: `uv run --extra dev ruff check .`
 - Compile check: `python3 -m compileall backend`

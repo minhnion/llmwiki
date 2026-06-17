@@ -1,9 +1,12 @@
 import argparse
 import asyncio
+import json
 from pathlib import Path
 
+from backend.app.api.routes.query import build_query_engine
 from backend.app.application.container import get_container
 from backend.app.db.migrations import MigrationRunner
+from backend.app.domain.query import QueryAskCommand
 from backend.app.repositories.extractions import SQLiteExtractionRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
@@ -36,6 +39,17 @@ def build_parser() -> argparse.ArgumentParser:
     register_parser.add_argument("--tag", dest="tags", action="append", default=[])
     ingest_parser = sources_subparsers.add_parser("ingest")
     ingest_parser.add_argument("source_id")
+
+    query_parser = subparsers.add_parser("query")
+    query_subparsers = query_parser.add_subparsers(dest="query_command", required=True)
+    ask_parser = query_subparsers.add_parser("ask")
+    ask_parser.add_argument("question", nargs="+")
+    ask_parser.add_argument("--mode", default="deep")
+    ask_parser.add_argument("--source-id", dest="source_ids", action="append", default=[])
+    ask_parser.add_argument("--tag", dest="tags", action="append", default=[])
+    ask_parser.add_argument("--max-candidates", type=int, default=24)
+    ask_parser.add_argument("--max-evidence", type=int, default=8)
+    ask_parser.add_argument("--json", action="store_true")
 
     return parser
 
@@ -110,6 +124,34 @@ def main() -> None:
         print(f"claims: {len(result.extraction.claims)}")
         print(f"entities: {len(result.extraction.entities)}")
         print(f"review_items: {len(result.extraction.review_items)}")
+        return
+
+    if args.command == "query" and args.query_command == "ask":
+        MigrationRunner(container.database).run()
+        if not container.settings.openai_api_key:
+            raise SystemExit("OPENAI_API_KEY is required for query synthesis.")
+        command = QueryAskCommand(
+            question=" ".join(args.question),
+            mode=args.mode,
+            source_ids=args.source_ids,
+            tags=args.tags,
+            max_candidates=args.max_candidates,
+            max_evidence=args.max_evidence,
+        )
+        result = asyncio.run(build_query_engine(container).ask(command))
+        if args.json:
+            print(json.dumps(result.model_dump(), ensure_ascii=False, indent=2))
+            return
+        print(result.answer)
+        print(f"\nconfidence: {result.confidence}")
+        print(f"query_id: {result.query_id}")
+        if result.citations:
+            print("\ncitations:")
+            for citation in result.citations:
+                print(
+                    f"- {citation.source_title} | {citation.locator} | "
+                    f"{citation.evidence_id}"
+                )
         return
 
     parser.error("Unsupported command")
