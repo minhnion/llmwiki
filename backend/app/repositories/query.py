@@ -69,6 +69,7 @@ class SQLiteQueryRepository(SQLiteRepository):
             channel_specs = (
                 ("evidence", 4.0, self._search_evidence_ids),
                 ("claim", 3.0, self._search_claim_evidence_ids),
+                ("graph", 2.6, self._search_graph_evidence_ids),
                 ("entity", 1.8, self._search_entity_evidence_ids),
                 ("wiki_page", 1.4, self._search_page_evidence_ids),
             )
@@ -218,6 +219,30 @@ class SQLiteQueryRepository(SQLiteRepository):
             WHERE entities_fts MATCH ?
             {filter_sql}
             ORDER BY bm25(entities_fts), ev.confidence DESC
+            LIMIT ?
+            """,
+            (fts_query, *params, limit),
+        ).fetchall()
+        return [row["evidence_id"] for row in rows]
+
+    def _search_graph_evidence_ids(
+        self,
+        connection,
+        fts_query: str,
+        source_ids: list[str],
+        tags: list[str],
+        limit: int,
+    ) -> list[str]:
+        filter_sql, params = _source_filter_sql("s", source_ids, tags)
+        rows = connection.execute(
+            f"""
+            SELECT rel.evidence_id AS evidence_id
+            FROM relation_edges_fts
+            JOIN relation_edges rel ON rel.id = relation_edges_fts.id
+            JOIN sources s ON s.id = rel.source_id
+            WHERE relation_edges_fts MATCH ?
+            {filter_sql}
+            ORDER BY bm25(relation_edges_fts), rel.confidence DESC
             LIMIT ?
             """,
             (fts_query, *params, limit),

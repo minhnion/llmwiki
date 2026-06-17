@@ -225,6 +225,113 @@ MIGRATIONS: tuple[Migration, ...] = (
         ON query_citations(evidence_id);
         """,
     ),
+    Migration(
+        version=4,
+        name="knowledge_graph",
+        sql="""
+        CREATE TABLE IF NOT EXISTS graph_runs (
+            id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            source_ids_json TEXT NOT NULL DEFAULT '[]',
+            claim_count INTEGER NOT NULL DEFAULT 0,
+            relation_count INTEGER NOT NULL DEFAULT 0,
+            contradiction_count INTEGER NOT NULL DEFAULT 0,
+            merge_candidate_count INTEGER NOT NULL DEFAULT 0,
+            entity_page_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            finished_at TEXT,
+            error TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS entity_aliases (
+            entity_id TEXT NOT NULL,
+            alias TEXT NOT NULL,
+            normalized_alias TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'ingest',
+            confidence REAL NOT NULL DEFAULT 1.0,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (entity_id, normalized_alias),
+            FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS relation_edges (
+            id TEXT PRIMARY KEY,
+            subject_entity_id TEXT,
+            subject_name TEXT NOT NULL,
+            predicate TEXT NOT NULL,
+            object_entity_id TEXT,
+            object_value TEXT NOT NULL,
+            object_type TEXT NOT NULL,
+            claim_id TEXT NOT NULL,
+            evidence_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            status TEXT NOT NULL,
+            qualifiers_json TEXT NOT NULL DEFAULT '[]',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (subject_entity_id) REFERENCES entities(id) ON DELETE SET NULL,
+            FOREIGN KEY (object_entity_id) REFERENCES entities(id) ON DELETE SET NULL,
+            FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE CASCADE,
+            FOREIGN KEY (evidence_id) REFERENCES evidence_items(id) ON DELETE CASCADE,
+            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS relation_edges_fts
+        USING fts5(
+            id UNINDEXED,
+            source_id UNINDEXED,
+            subject_name,
+            predicate,
+            object_value,
+            object_type,
+            status
+        );
+
+        CREATE TABLE IF NOT EXISTS contradictions (
+            id TEXT PRIMARY KEY,
+            claim_a_id TEXT NOT NULL,
+            claim_b_id TEXT NOT NULL,
+            relationship TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open',
+            evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (claim_a_id) REFERENCES claims(id) ON DELETE CASCADE,
+            FOREIGN KEY (claim_b_id) REFERENCES claims(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS entity_merge_candidates (
+            id TEXT PRIMARY KEY,
+            entity_a_id TEXT,
+            entity_b_id TEXT,
+            entity_a_name TEXT NOT NULL,
+            entity_b_name TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (entity_a_id) REFERENCES entities(id) ON DELETE SET NULL,
+            FOREIGN KEY (entity_b_id) REFERENCES entities(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_relation_edges_subject_entity
+        ON relation_edges(subject_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_relation_edges_object_entity
+        ON relation_edges(object_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_relation_edges_claim_id ON relation_edges(claim_id);
+        CREATE INDEX IF NOT EXISTS idx_relation_edges_evidence_id ON relation_edges(evidence_id);
+        CREATE INDEX IF NOT EXISTS idx_relation_edges_source_id ON relation_edges(source_id);
+        CREATE INDEX IF NOT EXISTS idx_contradictions_claim_a ON contradictions(claim_a_id);
+        CREATE INDEX IF NOT EXISTS idx_contradictions_claim_b ON contradictions(claim_b_id);
+        CREATE INDEX IF NOT EXISTS idx_merge_candidates_entity_a
+        ON entity_merge_candidates(entity_a_id);
+        CREATE INDEX IF NOT EXISTS idx_merge_candidates_entity_b
+        ON entity_merge_candidates(entity_b_id);
+        """,
+    ),
 )
 
 

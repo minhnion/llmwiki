@@ -37,3 +37,38 @@ def wiki_page_id(source_id: str) -> str:
 
 def query_run_id() -> str:
     return f"qry_{uuid4().hex[:16]}"
+
+
+def graph_run_id() -> str:
+    return f"grun_{uuid4().hex[:16]}"
+
+
+def relation_edge_id(
+    claim_id: str,
+    evidence_id: str,
+    subject_name: str,
+    predicate: str,
+    object_value: str,
+) -> str:
+    return "rel_" + stable_hash(
+        claim_id,
+        evidence_id,
+        subject_name,
+        predicate,
+        object_value,
+        length=20,
+    )
+
+
+def contradiction_id(claim_a_id: str, claim_b_id: str, relationship: str) -> str:
+    first, second = sorted((claim_a_id, claim_b_id))
+    return f"ctr_{stable_hash(first, second, relationship, length=20)}"
+
+
+def entity_merge_candidate_id(entity_a_id: str, entity_b_id: str) -> str:
+    first, second = sorted((entity_a_id, entity_b_id))
+    return f"merge_{stable_hash(first, second, length=20)}"
+
+
+def entity_page_id(entity_id_value: str) -> str:
+    return f"page_{stable_hash(entity_id_value, 'entity', length=20)}"

@@ -3,11 +3,14 @@ import asyncio
 import json
 from pathlib import Path
 
+from backend.app.api.routes.graph import build_graph_builder
 from backend.app.api.routes.query import build_query_engine
 from backend.app.application.container import get_container
 from backend.app.db.migrations import MigrationRunner
+from backend.app.domain.graph import GraphBuildCommand
 from backend.app.domain.query import QueryAskCommand
 from backend.app.repositories.extractions import SQLiteExtractionRepository
+from backend.app.repositories.graph import SQLiteGraphRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
 from backend.app.services.llm_client import OpenAIResponsesClient
@@ -50,6 +53,23 @@ def build_parser() -> argparse.ArgumentParser:
     ask_parser.add_argument("--max-candidates", type=int, default=24)
     ask_parser.add_argument("--max-evidence", type=int, default=8)
     ask_parser.add_argument("--json", action="store_true")
+
+    graph_parser = subparsers.add_parser("graph")
+    graph_subparsers = graph_parser.add_subparsers(dest="graph_command", required=True)
+    graph_build_parser = graph_subparsers.add_parser("build")
+    graph_build_parser.add_argument("--source-id", dest="source_ids", action="append", default=[])
+    graph_build_parser.add_argument("--no-rebuild", dest="rebuild", action="store_false")
+    graph_build_parser.add_argument("--max-claims-per-batch", type=int, default=40)
+    graph_build_parser.add_argument("--json", action="store_true")
+    graph_inspect_parser = graph_subparsers.add_parser("inspect")
+    graph_inspect_parser.add_argument("entity")
+    graph_inspect_parser.add_argument("--json", action="store_true")
+    graph_search_parser = graph_subparsers.add_parser("search")
+    graph_search_parser.add_argument("query", nargs="+")
+    graph_search_parser.add_argument("--json", action="store_true")
+    graph_contradictions_parser = graph_subparsers.add_parser("contradictions")
+    graph_contradictions_parser.add_argument("--status", default="open")
+    graph_contradictions_parser.add_argument("--json", action="store_true")
 
     return parser
 
@@ -152,6 +172,85 @@ def main() -> None:
                     f"- {citation.source_title} | {citation.locator} | "
                     f"{citation.evidence_id}"
                 )
+        return
+
+    if args.command == "graph" and args.graph_command == "build":
+        MigrationRunner(container.database).run()
+        if not container.settings.openai_api_key:
+            raise SystemExit("OPENAI_API_KEY is required for graph build.")
+        result = asyncio.run(
+            build_graph_builder(container).build(
+                GraphBuildCommand(
+                    source_ids=args.source_ids,
+                    rebuild=args.rebuild,
+                    max_claims_per_batch=args.max_claims_per_batch,
+                )
+            )
+        )
+        if args.json:
+            print(json.dumps(result.model_dump(), ensure_ascii=False, indent=2))
+            return
+        print(f"Graph build {result.status}: {result.graph_run_id}")
+        print(f"claims: {result.claim_count}")
+        print(f"relations: {result.relation_count}")
+        print(f"contradictions: {result.contradiction_count}")
+        print(f"merge_candidates: {result.merge_candidate_count}")
+        print(f"entity_pages: {result.entity_page_count}")
+        return
+
+    if args.command == "graph" and args.graph_command == "inspect":
+        MigrationRunner(container.database).run()
+        detail = SQLiteGraphRepository(container.database).get_entity_detail(args.entity)
+        if detail is None:
+            raise SystemExit(f"Entity not found: {args.entity}")
+        if args.json:
+            print(json.dumps(detail.model_dump(), ensure_ascii=False, indent=2))
+            return
+        print(f"{detail.entity.canonical_name} ({detail.entity.entity_type})")
+        print(detail.entity.description)
+        print(f"outgoing_relations: {len(detail.outgoing_relations)}")
+        print(f"incoming_relations: {len(detail.incoming_relations)}")
+        if detail.page_path:
+            print(f"page: {detail.page_path}")
+        return
+
+    if args.command == "graph" and args.graph_command == "search":
+        MigrationRunner(container.database).run()
+        result = SQLiteGraphRepository(container.database).search_graph(" ".join(args.query))
+        if args.json:
+            print(json.dumps(result.model_dump(), ensure_ascii=False, indent=2))
+            return
+        print("entities:")
+        for entity in result.entities:
+            print(f"- {entity.canonical_name} ({entity.entity_type}) [{entity.entity_id}]")
+        print("relations:")
+        for relation in result.relations:
+            print(
+                f"- {relation.subject_name} {relation.predicate} "
+                f"{relation.object_value} [{relation.id}]"
+            )
+        return
+
+    if args.command == "graph" and args.graph_command == "contradictions":
+        MigrationRunner(container.database).run()
+        contradictions = SQLiteGraphRepository(container.database).list_contradictions(
+            args.status
+        )
+        if args.json:
+            print(
+                json.dumps(
+                    [contradiction.model_dump() for contradiction in contradictions],
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return
+        for contradiction in contradictions:
+            print(
+                f"- {contradiction.relationship} "
+                f"{contradiction.claim_a_id} <-> {contradiction.claim_b_id} "
+                f"(confidence {contradiction.confidence:.2f})"
+            )
         return
 
     parser.error("Unsupported command")

@@ -30,3 +30,14 @@ Append-only ingest, query, and lint activity will be recorded here.
 - question: LLM Wiki khác RAG truyền thống ở điểm nào?
 - confidence: `insufficient`
 - citations: 0
+
+## [2026-06-17T10:47:41+00:00] register | LLM Wiki Concept
+
+- source_id: `src_dc3efe98ae62f23d`
+- path: `/mnt/disk1/aiotlab/minhnn225043/llm-wiki/docs/llm-wiki.md`
+
+## [2026-06-17T10:47:55+00:00] graph | grun_58d2399ed9f248b3
+
+- relations: 0
+- contradictions: 0
+- entity_pages: 0

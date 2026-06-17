@@ -13,6 +13,13 @@ from backend.app.domain.extraction import (
     INGEST_EXTRACTION_JSON_SCHEMA,
     IngestExtractionResult,
 )
+from backend.app.domain.graph import (
+    CONTRADICTION_DETECTION_JSON_SCHEMA,
+    GRAPH_EXTRACTION_JSON_SCHEMA,
+    ClaimGraphContext,
+    ContradictionDetectionResult,
+    GraphExtractionResult,
+)
 from backend.app.domain.models import SourceRef
 from backend.app.domain.query import (
     EVIDENCE_RANKING_JSON_SCHEMA,
@@ -186,6 +193,66 @@ class OpenAIResponsesClient:
         )
         return QuerySynthesisResult.model_validate(payload)
 
+    async def extract_graph_relations(
+        self,
+        claims: list[ClaimGraphContext],
+    ) -> GraphExtractionResult:
+        payload = await self._create_structured_response(
+            name="llm_wiki_graph_extraction",
+            schema=GRAPH_EXTRACTION_JSON_SCHEMA,
+            instructions=_graph_extraction_instructions(),
+            inputs=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": json.dumps(
+                                {
+                                    "claims": [
+                                        _claim_context_payload(claim)
+                                        for claim in claims
+                                    ]
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    ],
+                }
+            ],
+        )
+        return GraphExtractionResult.model_validate(payload)
+
+    async def detect_contradictions(
+        self,
+        claims: list[ClaimGraphContext],
+    ) -> ContradictionDetectionResult:
+        payload = await self._create_structured_response(
+            name="llm_wiki_contradiction_detection",
+            schema=CONTRADICTION_DETECTION_JSON_SCHEMA,
+            instructions=_contradiction_detection_instructions(),
+            inputs=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": json.dumps(
+                                {
+                                    "claims": [
+                                        _claim_context_payload(claim)
+                                        for claim in claims
+                                    ]
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    ],
+                }
+            ],
+        )
+        return ContradictionDetectionResult.model_validate(payload)
+
     async def _create_structured_response(
         self,
         name: str,
@@ -282,6 +349,32 @@ def _query_synthesis_instructions() -> str:
     )
 
 
+def _graph_extraction_instructions() -> str:
+    return (
+        "You are the graph extraction engine for a source-grounded LLM Wiki. "
+        "Convert provided claim contexts into concise relation triples. "
+        "Use only the provided claim IDs and evidence IDs. "
+        "Prefer existing entity names from the context for subjects and entity objects, "
+        "but allow literal objects for numbers, dates, metrics, and text values. "
+        "Predicates should be normalized, short verb phrases such as uses, persists, "
+        "retrieves, depends_on, contradicts, released_on, measured_by, or located_in. "
+        "Do not create relations that are not supported by the linked evidence. "
+        "Suggest entity merge candidates only when aliases or near-duplicates are plausible; "
+        "do not auto-merge. Return only JSON that matches the schema."
+    )
+
+
+def _contradiction_detection_instructions() -> str:
+    return (
+        "You are a contradiction detector for a source-grounded LLM Wiki. "
+        "Compare the supplied claims and return only meaningful semantic relationships "
+        "between claim pairs: contradicts, qualifies, duplicates, or supports. "
+        "Use unrelated only when you need to explicitly dismiss an apparent candidate. "
+        "Prefer high precision over recall. Do not invent claim IDs or evidence IDs. "
+        "Return only JSON that matches the schema."
+    )
+
+
 def _candidate_payload(candidate: EvidenceCandidate) -> dict[str, object]:
     return {
         "evidence_id": candidate.evidence_id,
@@ -299,4 +392,28 @@ def _candidate_payload(candidate: EvidenceCandidate) -> dict[str, object]:
         "entities": candidate.entities[:20],
         "retrieval_score": candidate.retrieval_score,
         "retrieval_channels": candidate.retrieval_channels,
+    }
+
+
+def _claim_context_payload(claim: ClaimGraphContext) -> dict[str, object]:
+    return {
+        "claim_id": claim.claim_id,
+        "source_id": claim.source_id,
+        "source_title": claim.source_title,
+        "text": compact_text(claim.text, 700),
+        "subject": claim.subject,
+        "predicate": claim.predicate,
+        "object": claim.object,
+        "status": claim.status,
+        "confidence": claim.confidence,
+        "entities": claim.entities[:30],
+        "evidence": [
+            {
+                "evidence_id": evidence.evidence_id,
+                "locator": evidence.locator,
+                "text": compact_text(evidence.text, 700),
+                "summary": compact_text(evidence.summary, 300),
+            }
+            for evidence in claim.evidence[:5]
+        ],
     }

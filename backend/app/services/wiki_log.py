@@ -57,3 +57,22 @@ class WikiLogWriter:
                 f"- confidence: `{confidence}`\n"
                 f"- citations: {citation_count}\n"
             )
+
+    def append_graph_built(
+        self,
+        timestamp: str,
+        graph_run_id: str,
+        relation_count: int,
+        contradiction_count: int,
+        entity_page_count: int,
+    ) -> None:
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.log_path.exists():
+            self.log_path.write_text("# Wiki Log\n\n", encoding="utf-8")
+        with self.log_path.open("a", encoding="utf-8") as file:
+            file.write(
+                f"\n## [{timestamp}] graph | {graph_run_id}\n\n"
+                f"- relations: {relation_count}\n"
+                f"- contradictions: {contradiction_count}\n"
+                f"- entity_pages: {entity_page_count}\n"
+            )

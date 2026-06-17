@@ -4,7 +4,7 @@ General-purpose LLM Wiki chatbot experiment. The project starts SQLite-first and
 
 ## Current Status
 
-Source registry, OpenAI multimodal ingest, and source-grounded query synthesis are implemented. Graph browsing, eval workflows, and frontend features will be implemented incrementally.
+Source registry, OpenAI multimodal ingest, source-grounded query synthesis, and SQLite knowledge graph build/inspect are implemented. Eval workflows and frontend features will be implemented incrementally.
 
 ## Quick Start
 
@@ -95,6 +95,27 @@ Expected query outputs:
 - `query_runs` and `query_citations` rows in SQLite
 - ignored runtime `wiki/log.md` gets a query entry
 
+Build the knowledge graph from ingested claims and evidence:
+
+```bash
+uv run python -m backend.app.cli graph build
+```
+
+Inspect graph state:
+
+```bash
+uv run python -m backend.app.cli graph search "LLM Wiki"
+uv run python -m backend.app.cli graph inspect "LLM Wiki"
+uv run python -m backend.app.cli graph contradictions
+```
+
+Expected graph outputs:
+
+- `relation_edges`, `contradictions`, `entity_aliases`, and `graph_runs` rows in SQLite
+- generated entity pages under `wiki/entities/`
+- graph-expanded evidence becomes available to query retrieval
+- ignored runtime `wiki/log.md` gets a graph entry
+
 API equivalents:
 
 ```bash
@@ -108,6 +129,14 @@ curl http://127.0.0.1:8010/api/sources
 curl -X POST http://127.0.0.1:8010/api/query \
   -H "Content-Type: application/json" \
   -d '{"question":"How is LLM Wiki different from traditional RAG?","mode":"deep"}'
+
+curl -X POST http://127.0.0.1:8010/api/graph/build \
+  -H "Content-Type: application/json" \
+  -d '{"source_ids":[],"rebuild":true}'
+
+curl "http://127.0.0.1:8010/api/graph/search?q=LLM%20Wiki"
+curl http://127.0.0.1:8010/api/graph/entities/LLM%20Wiki
+curl http://127.0.0.1:8010/api/graph/contradictions
 ```
 
 Run tests:

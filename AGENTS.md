@@ -41,7 +41,7 @@ Important factual answers must cite raw evidence or source-backed wiki pages. Do
 - Include stable page type, title, status, sources, claims, confidence, and timestamps when possible.
 - Use wikilinks for related pages.
 - Create review items for uncertain merges, duplicate entities, contradictions, and low-confidence claims.
-- Append ingest/query/lint actions to `wiki/log.md` once that file exists.
+- Append ingest/query/graph/lint actions to `wiki/log.md` once that file exists.
 - Keep `wiki/index.md` content-oriented and updated after ingest.
 
 ## Implementation Guidance
@@ -96,7 +96,7 @@ Keep the UI dense, operational, and suitable for repeated knowledge work.
 
 ## Current Repo State
 
-The repository currently has a Python/FastAPI backend, SQLite migrations, source registry, OpenAI multimodal ingest, SQLite FTS query retrieval, LLM evidence reranking, answer synthesis with citations, placeholder frontend folder, and generated wiki/raw/data directories.
+The repository currently has a Python/FastAPI backend, SQLite migrations, source registry, OpenAI multimodal ingest, SQLite FTS query retrieval, graph-expanded evidence retrieval, LLM evidence reranking, answer synthesis with citations, SQLite knowledge graph build/inspect endpoints, placeholder frontend folder, and generated wiki/raw/data directories.
 
 ## Project Commands
 
@@ -109,6 +109,10 @@ Use `uv` as the preferred local runner:
 - Ingest a source: `uv run python -m backend.app.cli sources ingest src_your_source_id`
 - Ask a query: `uv run python -m backend.app.cli query ask "How is LLM Wiki different from traditional RAG?"`
 - Ask a query as JSON: `uv run python -m backend.app.cli query ask "How is LLM Wiki different from traditional RAG?" --json`
+- Build graph: `uv run python -m backend.app.cli graph build`
+- Search graph: `uv run python -m backend.app.cli graph search "LLM Wiki"`
+- Inspect entity graph: `uv run python -m backend.app.cli graph inspect "LLM Wiki" --json`
+- List graph contradictions: `uv run python -m backend.app.cli graph contradictions`
 - Run tests: `uv run --extra dev pytest`
 - Run lint: `uv run --extra dev ruff check .`
 - Compile check: `python3 -m compileall backend`
