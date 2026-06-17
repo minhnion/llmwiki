@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environments
+.venv/
+venv/
+.env
+
+# Runtime data
+data/*.sqlite
+data/*.sqlite-*
+raw/sources/*
+raw/attachments/*
+!raw/sources/.gitkeep
+!raw/attachments/.gitkeep
+
+# Frontend
+node_modules/
+dist/
+build/
+.next/
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
