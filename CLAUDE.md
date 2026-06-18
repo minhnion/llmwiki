@@ -8,6 +8,7 @@ Primary references:
 
 - `docs/llm-wiki.md`
 - `docs/llm-wiki-chatbot-solution.md`
+- `docs/implementation-architecture-current.md`
 
 The core experiment is to compare a compounding LLM-maintained wiki against traditional RAG, especially for broad multi-domain corpora and synthesis-heavy questions.
 
@@ -53,11 +54,12 @@ Backend:
 - SQLite FTS5.
 - Background jobs for ingest.
 
-Frontend, when added:
+Frontend:
 
 - React or Next.js.
 - Operational dashboard style, not a landing page.
-- Views for chat, uploads, ingest queue, wiki browser, source evidence, review queue, graph, and evals.
+- Implemented views cover chat, uploads, source ingest, source evidence, graph, and contradictions.
+- Evaluation dashboard remains deferred until representative data exists.
 
 ## Ingest Workflow
 
@@ -140,7 +142,12 @@ Measure correctness, faithfulness, citation quality, contradiction handling, lat
 
 ## Current Repo State
 
-This repository currently has a Python/FastAPI backend, SQLite migrations, source registry, OpenAI multimodal ingest, SQLite FTS query retrieval, graph-expanded evidence retrieval, LLM evidence reranking, answer synthesis with citations, SQLite knowledge graph build/inspect endpoints, placeholder frontend folder, and generated wiki/raw/data directories.
+This repository currently has a Python/FastAPI backend plus a React/Vite/Tailwind
+workbench. The UI supports HTTP upload, ingest, source scoping, grounded chat with
+citations/evidence trace, knowledge graph build/visualization, entity inspection,
+and contradiction review. There is no default source seed. Runtime data starts
+empty, and prompts preserve the source/question language with Vietnamese as the
+configured fallback.
 
 ## Project Commands
 
@@ -157,6 +164,11 @@ Use `uv` as the preferred local runner:
 - Search graph: `uv run python -m backend.app.cli graph search "LLM Wiki"`
 - Inspect entity graph: `uv run python -m backend.app.cli graph inspect "LLM Wiki" --json`
 - List graph contradictions: `uv run python -m backend.app.cli graph contradictions`
+- Install frontend: `cd frontend && pnpm install`
+- Run frontend: `cd frontend && pnpm dev`
+- Test frontend: `cd frontend && pnpm test`
+- Lint frontend: `cd frontend && pnpm lint`
+- Build frontend: `cd frontend && pnpm build`
 - Run tests: `uv run --extra dev pytest`
 - Run lint: `uv run --extra dev ruff check .`
 - Compile check: `python3 -m compileall backend`

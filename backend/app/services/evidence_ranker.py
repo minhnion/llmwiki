@@ -24,8 +24,8 @@ class EvidenceRanker:
                 rejected_evidence_ids=[],
                 assessments=[],
                 contradictions=[],
-                missing_evidence=["No evidence candidates were retrieved."],
-                reasoning_summary="SQLite FTS returned no candidates.",
+                missing_evidence=["Không truy xuất được bằng chứng phù hợp."],
+                reasoning_summary="SQLite FTS không trả về candidate nào.",
             )
 
         ranking = await self.llm_client.rank_evidence(question, plan, candidates, max_evidence)
@@ -57,7 +57,7 @@ class EvidenceRanker:
                     evidence_id=candidate.evidence_id,
                     relevance="background",
                     support_type="supports",
-                    reason="Selected by retrieval score fallback.",
+                    reason="Được chọn dự phòng theo retrieval score.",
                     confidence=candidate.confidence,
                 )
                 for candidate in candidates[:max_evidence]

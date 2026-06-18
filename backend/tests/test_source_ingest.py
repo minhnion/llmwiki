@@ -108,10 +108,10 @@ async def _run_ingest_source_test(tmp_path) -> None:
     assert result.source.status == "ingested"
     assert result.page.path.exists()
     page_body = result.page.path.read_text(encoding="utf-8")
-    assert "## Evidence" in page_body
+    assert "## Bằng chứng" in page_body
     assert "LLM Wiki maintains a persistent markdown wiki." in page_body
     index_body = (wiki_dir / "index.md").read_text(encoding="utf-8")
-    assert "## Sources" in index_body
+    assert "## Nguồn tài liệu" in index_body
     assert source.id in index_body
 
     with sqlite3.connect(tmp_path / "app.sqlite") as connection:

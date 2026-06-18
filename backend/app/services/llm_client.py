@@ -61,10 +61,12 @@ class OpenAIResponsesClient:
         api_key: str,
         model: str,
         max_output_tokens: int = 6000,
+        preferred_language: str = "vi",
     ) -> None:
         self.api_key = api_key
         self.model = model
         self.max_output_tokens = max_output_tokens
+        self.preferred_language = preferred_language
         self.client = OpenAI(api_key=api_key)
 
     async def create_response(self, request: LLMRequest) -> LLMResponse:
@@ -82,7 +84,7 @@ class OpenAIResponsesClient:
         payload = await self._create_structured_response(
             name="llm_wiki_ingest_extraction",
             schema=INGEST_EXTRACTION_JSON_SCHEMA,
-            instructions=_ingest_instructions(),
+            instructions=_ingest_instructions(self.preferred_language),
             inputs=[
                 {
                     "role": "user",
@@ -94,7 +96,7 @@ class OpenAIResponsesClient:
                         },
                         {
                             "type": "input_text",
-                            "text": _source_prompt(source),
+                            "text": _source_prompt(source, self.preferred_language),
                         },
                     ],
                 }
@@ -106,7 +108,7 @@ class OpenAIResponsesClient:
         payload = await self._create_structured_response(
             name="llm_wiki_query_plan",
             schema=QUERY_PLAN_JSON_SCHEMA,
-            instructions=_query_plan_instructions(),
+            instructions=_query_plan_instructions(self.preferred_language),
             inputs=[
                 {
                     "role": "user",
@@ -131,7 +133,10 @@ class OpenAIResponsesClient:
         payload = await self._create_structured_response(
             name="llm_wiki_evidence_ranking",
             schema=EVIDENCE_RANKING_JSON_SCHEMA,
-            instructions=_evidence_ranking_instructions(max_evidence),
+            instructions=_evidence_ranking_instructions(
+                max_evidence,
+                self.preferred_language,
+            ),
             inputs=[
                 {
                     "role": "user",
@@ -167,7 +172,7 @@ class OpenAIResponsesClient:
         payload = await self._create_structured_response(
             name="llm_wiki_query_synthesis",
             schema=QUERY_SYNTHESIS_JSON_SCHEMA,
-            instructions=_query_synthesis_instructions(),
+            instructions=_query_synthesis_instructions(self.preferred_language),
             inputs=[
                 {
                     "role": "user",
@@ -200,7 +205,7 @@ class OpenAIResponsesClient:
         payload = await self._create_structured_response(
             name="llm_wiki_graph_extraction",
             schema=GRAPH_EXTRACTION_JSON_SCHEMA,
-            instructions=_graph_extraction_instructions(),
+            instructions=_graph_extraction_instructions(self.preferred_language),
             inputs=[
                 {
                     "role": "user",
@@ -230,7 +235,9 @@ class OpenAIResponsesClient:
         payload = await self._create_structured_response(
             name="llm_wiki_contradiction_detection",
             schema=CONTRADICTION_DETECTION_JSON_SCHEMA,
-            instructions=_contradiction_detection_instructions(),
+            instructions=_contradiction_detection_instructions(
+                self.preferred_language
+            ),
             inputs=[
                 {
                     "role": "user",
@@ -284,94 +291,99 @@ def _base64_file_data(path: Path, mime_type: str | None) -> str:
     return f"data:{guessed_mime};base64,{encoded}"
 
 
-def _ingest_instructions() -> str:
+def _ingest_instructions(preferred_language: str) -> str:
     return (
-        "You are the ingest engine for a general-purpose LLM Wiki. "
-        "Read the provided file directly, including visual/page information when available. "
-        "Extract source-grounded knowledge for a persistent wiki. "
-        "Prefer useful, atomic, cited claims over broad generic summaries. "
-        "Do not invent facts. If something is ambiguous, create a review item. "
-        "Use domain-agnostic entity types such as person, organization, place, product, "
-        "method, concept, event, dataset, metric, file, law, system, or other. "
-        "Evidence locators must be stable and human-auditable, for example page 3, "
-        "section 'Architecture', sheet 'Revenue'!A1:D20, image 2, or slide 5. "
-        "For scanned PDFs/images, describe visual evidence and transcribed text "
-        "as best as possible. "
-        "Return only JSON that matches the requested schema."
+        "Bạn là bộ máy ingest cho một LLM Wiki tổng quát. "
+        "Đọc trực tiếp tệp được cung cấp, bao gồm chữ, hình ảnh, bố cục trang, bảng và "
+        "biểu đồ khi có. Trích xuất tri thức bám sát nguồn để lưu vào wiki lâu dài. "
+        "TUYỆT ĐỐI giữ nguyên ngôn ngữ chính của tài liệu cho tiêu đề, tóm tắt, bằng chứng, "
+        "mệnh đề, mô tả thực thể, mục cần rà soát và câu hỏi mở; không tự dịch sang tiếng Anh. "
+        f"Nếu tài liệu không xác định rõ ngôn ngữ, ưu tiên `{preferred_language}`. "
+        "Ưu tiên các mệnh đề nguyên tử, hữu ích và có vị trí bằng chứng hơn tóm tắt chung chung. "
+        "Không bịa dữ kiện. Nội dung mơ hồ phải được đưa vào review_items. "
+        "Có thể dùng mã entity_type ổn định như person, organization, place, product, method, "
+        "concept, event, dataset, metric, file, law, system hoặc other, nhưng description và "
+        "name phải theo ngôn ngữ nguồn. Locator phải ổn định và kiểm tra được, ví dụ "
+        "trang 3, mục 'Kiến trúc', sheet 'Doanh thu'!A1:D20, hình 2 hoặc slide 5. "
+        "Với PDF scan/ảnh, mô tả bằng chứng thị giác và chép lại nội dung đọc được "
+        "tốt nhất có thể. "
+        "Chỉ trả về JSON đúng schema yêu cầu."
     )
 
 
-def _source_prompt(source: SourceRef) -> str:
+def _source_prompt(source: SourceRef, preferred_language: str) -> str:
     return (
-        f"Source metadata:\n"
+        f"Metadata nguồn:\n"
         f"- source_id: {source.id}\n"
-        f"- title: {source.title}\n"
-        f"- source_type: {source.source_type}\n"
+        f"- tiêu đề: {source.title}\n"
+        f"- loại nguồn: {source.source_type}\n"
         f"- sha256: {source.sha256}\n"
-        f"- path: {source.path}\n\n"
-        "Extract the strongest wiki-ready understanding from this source. "
-        "Include the most important evidence items, claims, entities, review items, "
-        "and open questions. Keep evidence concise but sufficient for later citation. "
-        "If the source is long, prioritize durable claims, definitions, relationships, "
-        "tables, figures, contradictions, and synthesis hooks that would help future queries."
+        f"- đường dẫn: {source.path}\n"
+        f"- ngôn ngữ ưu tiên khi không xác định được: {preferred_language}\n\n"
+        "Hãy tạo biểu diễn tri thức wiki tốt nhất từ nguồn này. Bao gồm bằng chứng, mệnh đề, "
+        "thực thể, mục cần rà soát và câu hỏi mở quan trọng nhất. Giữ bằng chứng ngắn gọn "
+        "nhưng đủ để trích dẫn về sau. Nếu tài liệu dài, ưu tiên định nghĩa, quan hệ, bảng, "
+        "hình, dữ kiện bền vững, điểm mâu thuẫn và nội dung hữu ích cho truy vấn tương lai. "
+        "Không dịch nội dung sang ngôn ngữ khác."
     )
 
 
-def _query_plan_instructions() -> str:
+def _query_plan_instructions(preferred_language: str) -> str:
     return (
-        "You are the query planner for a general-purpose LLM Wiki. "
-        "Turn the user question into a domain-agnostic retrieval plan for SQLite FTS "
-        "over evidence, claims, entities, and wiki pages. "
-        "Prefer precise keywords, entity hints, and subquestions that improve recall. "
-        "Do not answer the question. Return only JSON that matches the schema."
+        "Bạn là bộ lập kế hoạch truy vấn cho LLM Wiki tổng quát. "
+        "Chuyển câu hỏi thành kế hoạch retrieval độc lập domain cho SQLite FTS trên evidence, "
+        "claims, entities, relation graph và wiki pages. Giữ từ khóa, gợi ý thực thể và "
+        "câu hỏi con bằng ngôn ngữ của người hỏi để tăng recall; chỉ thêm biến thể ngôn ngữ "
+        "khác khi thực sự giúp tìm tên riêng hoặc thuật ngữ trong nguồn. "
+        f"Nếu không xác định được ngôn ngữ câu hỏi, dùng `{preferred_language}`. "
+        "Trường answer_language phải đúng ngôn ngữ câu hỏi. Không trả lời câu hỏi ở bước này. "
+        "Chỉ trả về JSON đúng schema."
     )
 
 
-def _evidence_ranking_instructions(max_evidence: int) -> str:
+def _evidence_ranking_instructions(max_evidence: int, preferred_language: str) -> str:
     return (
-        "You are an evidence judge for a source-grounded LLM Wiki answer engine. "
-        f"Select at most {max_evidence} evidence IDs that directly or strongly support "
-        "answering the question. Reject weak, duplicate, or off-topic candidates. "
-        "Call out contradictions and missing evidence explicitly. "
-        "Do not invent evidence IDs. Return only JSON that matches the schema."
+        "Bạn là bộ đánh giá bằng chứng của LLM Wiki bám sát nguồn. "
+        f"Chọn tối đa {max_evidence} evidence_id trực tiếp hoặc hỗ trợ mạnh cho câu hỏi. "
+        "Loại bằng chứng yếu, trùng hoặc lạc đề. Nêu rõ mâu thuẫn và phần bằng chứng còn thiếu. "
+        f"Viết reason/summary theo ngôn ngữ câu hỏi, mặc định `{preferred_language}`. "
+        "Không bịa evidence_id. Chỉ trả về JSON đúng schema."
     )
 
 
-def _query_synthesis_instructions() -> str:
+def _query_synthesis_instructions(preferred_language: str) -> str:
     return (
-        "You are the answer synthesizer for a source-grounded LLM Wiki chatbot. "
-        "Answer only from the selected evidence supplied by the system. "
-        "Every important factual claim must be backed by a citation using one of the "
-        "provided evidence IDs. If the evidence is insufficient, say so and keep "
-        "confidence as insufficient or low. Preserve the user's language when practical. "
-        "Separate contradictions and open questions instead of hiding uncertainty. "
-        "Return only JSON that matches the schema."
+        "Bạn là bộ tổng hợp câu trả lời cho chatbot LLM Wiki bám sát nguồn. "
+        "Chỉ trả lời từ các bằng chứng đã được chọn. Mọi khẳng định quan trọng phải có citation "
+        "dùng evidence_id được cung cấp. Nếu không đủ bằng chứng, phải nói rõ và đặt confidence "
+        "là insufficient hoặc low. BẮT BUỘC trả lời cùng ngôn ngữ với câu hỏi của người dùng; "
+        f"nếu không xác định được thì dùng `{preferred_language}`. Không tự chuyển câu hỏi "
+        "tiếng Việt sang câu trả lời tiếng Anh. Tách riêng mâu thuẫn và câu hỏi mở, không che "
+        "giấu bất định. Chỉ trả về JSON đúng schema."
     )
 
 
-def _graph_extraction_instructions() -> str:
+def _graph_extraction_instructions(preferred_language: str) -> str:
     return (
-        "You are the graph extraction engine for a source-grounded LLM Wiki. "
-        "Convert provided claim contexts into concise relation triples. "
-        "Use only the provided claim IDs and evidence IDs. "
-        "Prefer existing entity names from the context for subjects and entity objects, "
-        "but allow literal objects for numbers, dates, metrics, and text values. "
-        "Predicates should be normalized, short verb phrases such as uses, persists, "
-        "retrieves, depends_on, contradicts, released_on, measured_by, or located_in. "
-        "Do not create relations that are not supported by the linked evidence. "
-        "Suggest entity merge candidates only when aliases or near-duplicates are plausible; "
-        "do not auto-merge. Return only JSON that matches the schema."
+        "Bạn là bộ trích xuất knowledge graph cho LLM Wiki bám sát nguồn. "
+        "Chuyển các claim context thành bộ ba quan hệ ngắn gọn và chỉ dùng claim_id/evidence_id "
+        "được cung cấp. Giữ nguyên tên thực thể và ngôn ngữ của mệnh đề nguồn. Predicate phải "
+        "là cụm động từ ngắn, nhất quán và có ý nghĩa trong ngôn ngữ nguồn; không ép predicate "
+        f"tiếng Việt sang tiếng Anh. Khi nguồn không rõ ngôn ngữ, dùng `{preferred_language}`. "
+        "Cho phép object literal với số, ngày, metric và văn bản. Không tạo quan hệ không được "
+        "bằng chứng hỗ trợ. Chỉ đề xuất merge candidate khi alias/gần trùng thực sự hợp lý và "
+        "không tự merge. Chỉ trả về JSON đúng schema."
     )
 
 
-def _contradiction_detection_instructions() -> str:
+def _contradiction_detection_instructions(preferred_language: str) -> str:
     return (
-        "You are a contradiction detector for a source-grounded LLM Wiki. "
-        "Compare the supplied claims and return only meaningful semantic relationships "
-        "between claim pairs: contradicts, qualifies, duplicates, or supports. "
-        "Use unrelated only when you need to explicitly dismiss an apparent candidate. "
-        "Prefer high precision over recall. Do not invent claim IDs or evidence IDs. "
-        "Return only JSON that matches the schema."
+        "Bạn là bộ phát hiện mâu thuẫn cho LLM Wiki bám sát nguồn. So sánh các claims và chỉ "
+        "trả về quan hệ ngữ nghĩa có ý nghĩa giữa từng cặp: contradicts, qualifies, duplicates, "
+        "supports hoặc unrelated. Các mã relationship giữ tiếng Anh để ổn định schema, nhưng "
+        f"reason và notes phải theo ngôn ngữ claims, mặc định `{preferred_language}`. "
+        "Ưu tiên precision cao hơn recall. Không bịa claim_id/evidence_id. "
+        "Chỉ trả về JSON đúng schema."
     )
 
 

@@ -14,7 +14,7 @@ class WikiLogWriter:
     ) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         if not self.log_path.exists():
-            self.log_path.write_text("# Wiki Log\n\n", encoding="utf-8")
+            self.log_path.write_text("# Nhật ký Wiki\n\n", encoding="utf-8")
         with self.log_path.open("a", encoding="utf-8") as file:
             file.write(
                 f"\n## [{timestamp}] register | {title}\n\n"
@@ -31,7 +31,7 @@ class WikiLogWriter:
     ) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         if not self.log_path.exists():
-            self.log_path.write_text("# Wiki Log\n\n", encoding="utf-8")
+            self.log_path.write_text("# Nhật ký Wiki\n\n", encoding="utf-8")
         with self.log_path.open("a", encoding="utf-8") as file:
             file.write(
                 f"\n## [{timestamp}] ingest | {title}\n\n"
@@ -49,7 +49,7 @@ class WikiLogWriter:
     ) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         if not self.log_path.exists():
-            self.log_path.write_text("# Wiki Log\n\n", encoding="utf-8")
+            self.log_path.write_text("# Nhật ký Wiki\n\n", encoding="utf-8")
         with self.log_path.open("a", encoding="utf-8") as file:
             file.write(
                 f"\n## [{timestamp}] query | {query_id}\n\n"
@@ -68,7 +68,7 @@ class WikiLogWriter:
     ) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         if not self.log_path.exists():
-            self.log_path.write_text("# Wiki Log\n\n", encoding="utf-8")
+            self.log_path.write_text("# Nhật ký Wiki\n\n", encoding="utf-8")
         with self.log_path.open("a", encoding="utf-8") as file:
             file.write(
                 f"\n## [{timestamp}] graph | {graph_run_id}\n\n"

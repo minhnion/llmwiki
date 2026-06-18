@@ -16,9 +16,12 @@ from backend.app.domain.graph import (
     ExtractedEntityMergeCandidate,
     ExtractedRelation,
     GraphBuildResult,
+    GraphEdge,
     GraphEntity,
     GraphEntityDetail,
+    GraphNode,
     GraphSearchResult,
+    GraphVisualization,
     RelationEdge,
 )
 from backend.app.domain.models import WikiPage
@@ -478,6 +481,33 @@ class SQLiteGraphRepository(SQLiteRepository):
             relations=[_row_to_relation(row) for row in relation_rows],
         )
 
+    def visualize_graph(self, query: str | None = None, limit: int = 50) -> GraphVisualization:
+        fts_query = _build_simple_fts_query(query or "")
+        with self.database.connect() as connection:
+            if fts_query:
+                rows = connection.execute(
+                    """
+                    SELECT rel.*
+                    FROM relation_edges_fts
+                    JOIN relation_edges rel ON rel.id = relation_edges_fts.id
+                    WHERE relation_edges_fts MATCH ?
+                    ORDER BY bm25(relation_edges_fts), rel.confidence DESC
+                    LIMIT ?
+                    """,
+                    (fts_query, limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM relation_edges
+                    ORDER BY confidence DESC, updated_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+        relations = [_row_to_relation(row) for row in rows]
+        return _relations_to_visualization(relations)
+
     def get_entity_detail(self, entity_id_or_name: str) -> GraphEntityDetail | None:
         with self.database.connect() as connection:
             entity_id = self._resolve_entity_id(connection, entity_id_or_name)
@@ -719,6 +749,38 @@ def _row_to_merge_candidate(row) -> EntityMergeCandidate:
         status=row["status"],
         created_at=row["created_at"],
     )
+
+
+def _relations_to_visualization(relations: list[RelationEdge]) -> GraphVisualization:
+    nodes: dict[str, GraphNode] = {}
+    edges: list[GraphEdge] = []
+    for relation in relations:
+        source_node_id = relation.subject_entity_id or f"subject:{relation.subject_name}"
+        target_node_id = relation.object_entity_id or f"literal:{relation.id}"
+        nodes[source_node_id] = GraphNode(
+            id=source_node_id,
+            label=relation.subject_name,
+            node_type="entity" if relation.subject_entity_id else "subject",
+            confidence=relation.confidence,
+        )
+        nodes[target_node_id] = GraphNode(
+            id=target_node_id,
+            label=relation.object_value,
+            node_type="entity" if relation.object_entity_id else relation.object_type,
+            confidence=relation.confidence,
+        )
+        edges.append(
+            GraphEdge(
+                id=relation.id,
+                source=source_node_id,
+                target=target_node_id,
+                label=relation.predicate,
+                confidence=relation.confidence,
+                claim_id=relation.claim_id,
+                evidence_id=relation.evidence_id,
+            )
+        )
+    return GraphVisualization(nodes=list(nodes.values()), edges=edges)
 
 
 def _normalize_name(value: str) -> str:

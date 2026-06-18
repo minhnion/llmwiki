@@ -1,3 +1,3 @@
-# Wiki Log
+# Nhật ký Wiki
 
-Runtime ingest, query, and lint activity is written to `wiki/log.md`.
+Hoạt động runtime được ghi vào `wiki/log.md`.

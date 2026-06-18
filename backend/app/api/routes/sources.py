@@ -1,10 +1,11 @@
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
 from backend.app.application.container import AppContainer, get_container
+from backend.app.core.text import slugify
 from backend.app.domain.models import SourceRef
 from backend.app.repositories.extractions import SQLiteExtractionRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
@@ -95,6 +96,7 @@ def build_source_ingest(container: AppContainer) -> SourceIngestService:
             api_key=container.settings.openai_api_key,
             model=container.settings.openai_model,
             max_output_tokens=container.settings.max_output_tokens,
+            preferred_language=container.settings.preferred_language,
         ),
         source_page_writer=SourcePageWriter(container.settings.wiki_dir),
         wiki_log_writer=WikiLogWriter(container.settings.wiki_dir),
@@ -120,6 +122,51 @@ def register_source(
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return SourceResponse.from_domain(source)
+
+
+@router.post("/upload", response_model=SourceResponse, status_code=status.HTTP_201_CREATED)
+async def upload_source(
+    container: ContainerDependency,
+    file: Annotated[UploadFile, File()],
+    title: Annotated[str | None, Form()] = None,
+    source_type: Annotated[str | None, Form()] = None,
+    tags: Annotated[list[str] | None, Form()] = None,
+) -> SourceResponse:
+    if not file.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Filename is required.")
+    upload_dir = container.settings.raw_dir / "sources"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = _safe_upload_name(file.filename)
+    destination = _next_available_path(upload_dir / safe_name)
+    size = 0
+    with destination.open("wb") as output:
+        while chunk := await file.read(1024 * 1024):
+            size += len(chunk)
+            if size > container.settings.max_file_bytes:
+                destination.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Uploaded file exceeds max size: "
+                        f"{size} > {container.settings.max_file_bytes} bytes"
+                    ),
+                )
+            output.write(chunk)
+
+    service = build_source_registry(container)
+    try:
+        source = service.register(
+            RegisterSourceCommand(
+                path=destination,
+                title=title or Path(file.filename).stem,
+                source_type=source_type,
+                tags=tuple(tags or []),
+            )
+        )
+    except ValueError as exc:
+        destination.unlink(missing_ok=True)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return SourceResponse.from_domain(source)
 
@@ -153,3 +200,20 @@ def get_source(source_id: str, container: ContainerDependency) -> SourceResponse
     if source is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
     return SourceResponse.from_domain(source)
+
+
+def _safe_upload_name(filename: str) -> str:
+    path = Path(filename)
+    stem = slugify(path.stem, fallback="upload")
+    suffix = "".join(char for char in path.suffix.lower() if char.isalnum() or char == ".")
+    return f"{stem}{suffix}"
+
+
+def _next_available_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+    for index in range(1, 10_000):
+        candidate = path.with_name(f"{path.stem}-{index}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+    raise ValueError(f"Could not allocate upload path for {path.name}")

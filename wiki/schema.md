@@ -1,3 +1,3 @@
-# Wiki Schema
+# Quy ước Wiki
 
-Generated pages should use YAML frontmatter, wikilinks, evidence references, and review markers for uncertain claims.
+Các trang được sinh tự động sử dụng YAML frontmatter, wikilink, tham chiếu bằng chứng và mục rà soát cho mệnh đề chưa chắc chắn.

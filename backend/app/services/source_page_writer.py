@@ -57,47 +57,47 @@ class SourcePageWriter:
                 "",
                 f"# {extraction.source_title or source.title}",
                 "",
-                "## Summary",
+                "## Tóm tắt",
                 "",
                 extraction.source_summary,
                 "",
-                "## Key Takeaways",
+                "## Điểm chính",
                 "",
                 *self._bullet_list(extraction.key_takeaways),
                 "",
-                "## Evidence",
+                "## Bằng chứng",
                 "",
                 *[
-                    f"- `{item.locator}` ({item.modality}, confidence {item.confidence:.2f}): "
+                    f"- `{item.locator}` ({item.modality}, độ tin cậy {item.confidence:.2f}): "
                     f"{item.summary} {item.text}"
                     for item in extraction.evidence_items
                 ],
                 "",
-                "## Claims",
+                "## Mệnh đề",
                 "",
                 *[
                     f"- {claim.text} "
                     f"[{', '.join(f'`{locator}`' for locator in claim.evidence_locators)}] "
-                    f"(confidence {claim.confidence:.2f}, status: {claim.status})"
+                    f"(độ tin cậy {claim.confidence:.2f}, trạng thái: {claim.status})"
                     for claim in extraction.claims
                 ],
                 "",
-                "## Entities",
+                "## Thực thể",
                 "",
                 *[
                     f"- [[{entity.name}]] ({entity.entity_type}): {entity.description} "
-                    f"(confidence {entity.confidence:.2f})"
+                    f"(độ tin cậy {entity.confidence:.2f})"
                     for entity in extraction.entities
                 ],
                 "",
-                "## Review Items",
+                "## Mục cần rà soát",
                 "",
                 *[
                     f"- **{item.severity} / {item.review_type}**: {item.title}. {item.body}"
                     for item in extraction.review_items
                 ],
                 "",
-                "## Open Questions",
+                "## Câu hỏi mở",
                 "",
                 *self._bullet_list(extraction.open_questions),
                 "",
@@ -114,7 +114,11 @@ class SourcePageWriter:
         if index_path.exists():
             existing_lines = index_path.read_text(encoding="utf-8").splitlines()
         else:
-            existing_lines = ["# Wiki Index", "", "This file catalogs generated wiki pages."]
+            existing_lines = [
+                "# Chỉ mục Wiki",
+                "",
+                "Tệp này liệt kê các trang wiki được hệ thống sinh tự động.",
+            ]
 
         source_line = (
             f"- [[{page_path.relative_to(self.wiki_dir).as_posix()}|"
@@ -123,11 +127,11 @@ class SourcePageWriter:
         )
         source_marker = f"source_id: `{source.id}`"
         filtered_lines = [line for line in existing_lines if source_marker not in line]
-        if "## Sources" not in filtered_lines:
+        if "## Nguồn tài liệu" not in filtered_lines:
             if filtered_lines and filtered_lines[-1].strip():
                 filtered_lines.append("")
-            filtered_lines.extend(["## Sources", ""])
-        source_header_index = filtered_lines.index("## Sources")
+            filtered_lines.extend(["## Nguồn tài liệu", ""])
+        source_header_index = filtered_lines.index("## Nguồn tài liệu")
         insert_at = source_header_index + 1
         while insert_at < len(filtered_lines) and filtered_lines[insert_at].startswith("- "):
             insert_at += 1
@@ -137,7 +141,7 @@ class SourcePageWriter:
     @staticmethod
     def _bullet_list(items: list[str]) -> list[str]:
         if not items:
-            return ["- None."]
+            return ["- Không có."]
         return [f"- {item}" for item in items]
 
     @staticmethod

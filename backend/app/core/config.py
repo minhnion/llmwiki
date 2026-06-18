@@ -17,9 +17,14 @@ class Settings(BaseSettings):
     )
     raw_dir: Path = Field(default=PROJECT_ROOT / "raw", alias="LLM_WIKI_RAW_DIR")
     wiki_dir: Path = Field(default=PROJECT_ROOT / "wiki", alias="LLM_WIKI_WIKI_DIR")
-    port: int = Field(default=8010, alias="LLM_WIKI_PORT")
+    port: int = Field(default=8020, alias="LLM_WIKI_PORT")
+    cors_origins: str = Field(
+        default="http://localhost:5173,http://127.0.0.1:5173",
+        alias="LLM_WIKI_CORS_ORIGINS",
+    )
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o", alias="LLM_WIKI_MODEL")
+    preferred_language: str = Field(default="vi", alias="LLM_WIKI_PREFERRED_LANGUAGE")
     max_file_bytes: int = Field(default=50_000_000, alias="LLM_WIKI_MAX_FILE_BYTES")
     max_output_tokens: int = Field(default=6000, alias="LLM_WIKI_MAX_OUTPUT_TOKENS")
 
@@ -34,3 +39,7 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def cors_origin_list(origins: str) -> list[str]:
+    return [origin.strip() for origin in origins.split(",") if origin.strip()]

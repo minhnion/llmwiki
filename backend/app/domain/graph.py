@@ -176,6 +176,34 @@ class GraphSearchResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class GraphNode(BaseModel):
+    id: str
+    label: str
+    node_type: str
+    confidence: float | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class GraphEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    label: str
+    confidence: float
+    claim_id: str
+    evidence_id: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class GraphVisualization(BaseModel):
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+
+    model_config = ConfigDict(extra="forbid")
+
+
 GRAPH_EXTRACTION_JSON_SCHEMA = {
     "type": "object",
     "additionalProperties": False,

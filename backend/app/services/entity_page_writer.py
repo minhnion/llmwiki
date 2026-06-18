@@ -62,40 +62,40 @@ class EntityPageWriter:
                 "",
                 f"# {detail.entity.canonical_name}",
                 "",
-                "## Summary",
+                "## Tóm tắt",
                 "",
                 detail.entity.description,
                 "",
-                "## Aliases",
+                "## Tên khác",
                 "",
                 *self._bullet_list(detail.entity.aliases),
                 "",
-                "## Outgoing Relations",
+                "## Quan hệ đi",
                 "",
                 *[
                     f"- {relation.subject_name} **{relation.predicate}** "
                     f"{relation.object_value} "
-                    f"(claim `{relation.claim_id}`, evidence `{relation.evidence_id}`, "
-                    f"confidence {relation.confidence:.2f})"
+                    f"(mệnh đề `{relation.claim_id}`, bằng chứng `{relation.evidence_id}`, "
+                    f"độ tin cậy {relation.confidence:.2f})"
                     for relation in detail.outgoing_relations
                 ],
                 "",
-                "## Incoming Relations",
+                "## Quan hệ đến",
                 "",
                 *[
                     f"- {relation.subject_name} **{relation.predicate}** "
                     f"{relation.object_value} "
-                    f"(claim `{relation.claim_id}`, evidence `{relation.evidence_id}`, "
-                    f"confidence {relation.confidence:.2f})"
+                    f"(mệnh đề `{relation.claim_id}`, bằng chứng `{relation.evidence_id}`, "
+                    f"độ tin cậy {relation.confidence:.2f})"
                     for relation in detail.incoming_relations
                 ],
                 "",
-                "## Merge Candidates",
+                "## Đề xuất hợp nhất",
                 "",
                 *[
                     f"- {candidate.entity_a_name} <-> {candidate.entity_b_name}: "
-                    f"{candidate.reason} (confidence {candidate.confidence:.2f}, "
-                    f"status {candidate.status})"
+                    f"{candidate.reason} (độ tin cậy {candidate.confidence:.2f}, "
+                    f"trạng thái {candidate.status})"
                     for candidate in detail.merge_candidates
                 ],
                 "",
@@ -107,7 +107,11 @@ class EntityPageWriter:
         if index_path.exists():
             existing_lines = index_path.read_text(encoding="utf-8").splitlines()
         else:
-            existing_lines = ["# Wiki Index", "", "This file catalogs generated wiki pages."]
+            existing_lines = [
+                "# Chỉ mục Wiki",
+                "",
+                "Tệp này liệt kê các trang wiki được hệ thống sinh tự động.",
+            ]
 
         entity_line = (
             f"- [[{page_path.relative_to(self.wiki_dir).as_posix()}|"
@@ -116,11 +120,11 @@ class EntityPageWriter:
         )
         marker = f"entity_id: `{detail.entity.entity_id}`"
         filtered_lines = [line for line in existing_lines if marker not in line]
-        if "## Entities" not in filtered_lines:
+        if "## Thực thể" not in filtered_lines:
             if filtered_lines and filtered_lines[-1].strip():
                 filtered_lines.append("")
-            filtered_lines.extend(["## Entities", ""])
-        header_index = filtered_lines.index("## Entities")
+            filtered_lines.extend(["## Thực thể", ""])
+        header_index = filtered_lines.index("## Thực thể")
         insert_at = header_index + 1
         while insert_at < len(filtered_lines) and filtered_lines[insert_at].startswith("- "):
             insert_at += 1
@@ -130,7 +134,7 @@ class EntityPageWriter:
     @staticmethod
     def _bullet_list(items: list[str]) -> list[str]:
         if not items:
-            return ["- None."]
+            return ["- Không có."]
         return [f"- {item}" for item in items]
 
     @staticmethod

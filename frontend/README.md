@@ -1,13 +1,28 @@
-# Frontend
+# LLM Wiki Frontend
 
-Frontend implementation will be added after the backend foundation and first ingest/query workflows are stable.
+React + Vite + Tailwind application for the LLM Wiki workbench.
 
-Expected views:
+## Commands
 
-- Chat with citations.
-- Upload and ingest queue.
-- Wiki browser.
-- Evidence/source viewer.
-- Review queue.
-- Graph view.
-- Evaluation dashboard.
+```bash
+pnpm install
+pnpm dev
+pnpm test
+pnpm lint
+pnpm build
+```
+
+The frontend expects the backend API at `/api` through the Vite proxy. Configure the
+proxy target in `frontend/.env` when the backend uses another port:
+
+```bash
+cp .env.example .env
+pnpm dev
+```
+
+Default values:
+
+```bash
+VITE_API_BASE_URL=/api
+VITE_BACKEND_URL=http://127.0.0.1:8020
+```

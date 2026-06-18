@@ -105,12 +105,12 @@ def _select_evidence(
 
 def _insufficient_synthesis(ranking: EvidenceRankingResult) -> QuerySynthesisResult:
     open_questions = ranking.missing_evidence or [
-        "Ingest more relevant source material or broaden the query filters."
+        "Hãy ingest thêm tài liệu liên quan hoặc mở rộng phạm vi tài liệu truy vấn."
     ]
     return QuerySynthesisResult(
         answer=(
-            "I do not have enough source-grounded evidence in the current LLM Wiki "
-            "to answer this question reliably."
+            "LLM Wiki hiện chưa có đủ bằng chứng bám sát nguồn để trả lời câu hỏi này "
+            "một cách đáng tin cậy."
         ),
         confidence="insufficient",
         citations=[],

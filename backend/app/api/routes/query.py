@@ -23,6 +23,7 @@ def build_query_engine(container: AppContainer) -> QueryEngine:
         api_key=container.settings.openai_api_key,
         model=container.settings.openai_model,
         max_output_tokens=container.settings.max_output_tokens,
+        preferred_language=container.settings.preferred_language,
     )
     return QueryEngine(
         repository=SQLiteQueryRepository(container.database),

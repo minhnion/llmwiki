@@ -1,3 +1,3 @@
-# Wiki Purpose
+# Mục đích Wiki
 
-Maintain a persistent, source-grounded, domain-agnostic knowledge base for a general LLM Wiki chatbot.
+Duy trì kho tri thức lâu dài, độc lập domain và bám sát nguồn cho chatbot LLM Wiki tổng quát.

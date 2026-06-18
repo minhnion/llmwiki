@@ -1,43 +1,25 @@
-# Wiki Log
+# Nhật ký Wiki
 
-Append-only ingest, query, and lint activity will be recorded here.
+Các hoạt động đăng ký, ingest, truy vấn và dựng graph sẽ được ghi nối tiếp tại đây.
 
-## [2026-06-17T09:25:54+00:00] register | LLM Wiki Concept
+## [2026-06-18T03:24:01+00:00] register | document-112
 
-- source_id: `src_dc3efe98ae62f23d`
-- path: `/mnt/disk1/aiotlab/minhnn225043/llm-wiki/docs/llm-wiki.md`
+- source_id: `src_9e6bbe13d5705fc8`
+- path: `/mnt/disk1/aiotlab/minhnn225043/llm-wiki/raw/sources/document-112.pdf`
 
-## [2026-06-17T10:25:02+00:00] query | qry_bc854fd6bf2a427b
+## [2026-06-18T03:26:50+00:00] ingest | Hướng dẫn chẩn đoán, điều trị và quản lý một số bệnh không lây nhiễm tại trạm y tế xã
 
-- question: LLM Wiki khác RAG truyền thống ở điểm nào?
-- confidence: `insufficient`
-- citations: 0
+- source_id: `src_9e6bbe13d5705fc8`
+- page: `wiki/sources/huong-dan-chan-oan-ieu-tri-va-quan-ly-mot-so-benh-khong-lay-nhiem-tai-tram-y-te-xa-src_9e6bbe13d5705fc8.md`
 
-## [2026-06-17T10:25:33+00:00] query | qry_8356effb8aa348ea
+## [2026-06-18T03:28:11+00:00] graph | grun_c36a81220dbc43b7
 
-- question: LLM Wiki khác RAG truyền thống ở điểm nào?
-- confidence: `insufficient`
-- citations: 0
-
-## [2026-06-17T10:25:50+00:00] query | qry_6baa86ead7ce4f6a
-
-- question: LLM Wiki khác RAG truyền thống ở điểm nào?
-- confidence: `insufficient`
-- citations: 0
-
-## [2026-06-17T10:25:59+00:00] query | qry_e6142dab73f8495f
-
-- question: LLM Wiki khác RAG truyền thống ở điểm nào?
-- confidence: `insufficient`
-- citations: 0
-
-## [2026-06-17T10:47:41+00:00] register | LLM Wiki Concept
-
-- source_id: `src_dc3efe98ae62f23d`
-- path: `/mnt/disk1/aiotlab/minhnn225043/llm-wiki/docs/llm-wiki.md`
-
-## [2026-06-17T10:47:55+00:00] graph | grun_58d2399ed9f248b3
-
-- relations: 0
+- relations: 2
 - contradictions: 0
-- entity_pages: 0
+- entity_pages: 1
+
+## [2026-06-18T03:28:39+00:00] query | qry_af6ebf429d274e6b
+
+- question: BMI lý tưởng được khuyến nghị cho người tăng huyết áp là bao nhiêu?
+- confidence: `insufficient`
+- citations: 1

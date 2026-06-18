@@ -4,7 +4,9 @@ import sqlite3
 from fastapi.testclient import TestClient
 
 from backend.app.api.routes import graph as graph_route
+from backend.app.application.container import AppContainer, get_container
 from backend.app.cli import build_parser
+from backend.app.core.config import Settings
 from backend.app.db.connection import SQLiteDatabase
 from backend.app.db.migrations import MigrationRunner
 from backend.app.domain.extraction import (
@@ -224,6 +226,10 @@ async def _run_graph_build_test(tmp_path) -> None:
     assert contradictions[0].relationship == "contradicts"
     search = repository.search_graph("source-grounded artifacts")
     assert search.relations
+    visualization = repository.visualize_graph(limit=10)
+    assert visualization.nodes
+    assert visualization.edges
+    assert any(edge.label == "persists" for edge in visualization.edges)
 
     with sqlite3.connect(database.database_path) as connection:
         relation_count = connection.execute("SELECT COUNT(*) FROM relation_edges").fetchone()[0]
@@ -297,6 +303,39 @@ def test_graph_api_build_route_uses_builder(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["graph_run_id"] == "grun_test"
     assert response.json()["source_ids"] == ["src_test"]
+
+
+def test_graph_visualization_api_returns_nodes_and_edges(tmp_path) -> None:
+    asyncio.run(_run_graph_visualization_api_test(tmp_path))
+
+
+async def _run_graph_visualization_api_test(tmp_path) -> None:
+    database, wiki_dir, _ = await _seed_ingested_source(tmp_path)
+    llm_client = FakeGraphLLMClient()
+    await GraphBuilder(
+        repository=SQLiteGraphRepository(database),
+        extractor=GraphExtractor(llm_client),
+        contradiction_detector=ContradictionDetector(llm_client),
+        entity_page_writer=EntityPageWriter(wiki_dir),
+        wiki_log_writer=WikiLogWriter(wiki_dir),
+    ).build(GraphBuildCommand())
+    app = create_app()
+    app.dependency_overrides[get_container] = lambda: AppContainer(
+        settings=Settings(
+            database_path=database.database_path,
+            raw_dir=tmp_path / "raw",
+            wiki_dir=wiki_dir,
+        ),
+        database=database,
+    )
+
+    response = TestClient(app).get("/api/graph/visualization?limit=10")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["nodes"]
+    assert payload["edges"]
+    assert any(edge["label"] == "persists" for edge in payload["edges"])
 
 
 def test_graph_cli_parser_accepts_commands() -> None:

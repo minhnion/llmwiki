@@ -9,6 +9,7 @@ from backend.app.domain.graph import (
     GraphBuildResult,
     GraphEntityDetail,
     GraphSearchResult,
+    GraphVisualization,
 )
 from backend.app.repositories.graph import SQLiteGraphRepository
 from backend.app.services.contradiction_detector import ContradictionDetector
@@ -29,6 +30,7 @@ def build_graph_builder(container: AppContainer) -> GraphBuilder:
         api_key=container.settings.openai_api_key,
         model=container.settings.openai_model,
         max_output_tokens=container.settings.max_output_tokens,
+        preferred_language=container.settings.preferred_language,
     )
     return GraphBuilder(
         repository=SQLiteGraphRepository(container.database),
@@ -56,6 +58,15 @@ def search_graph(
     container: ContainerDependency,
 ) -> GraphSearchResult:
     return SQLiteGraphRepository(container.database).search_graph(q)
+
+
+@router.get("/visualization", response_model=GraphVisualization)
+def visualize_graph(
+    container: ContainerDependency,
+    q: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> GraphVisualization:
+    return SQLiteGraphRepository(container.database).visualize_graph(q, limit)
 
 
 @router.get("/entities/{entity_id_or_name}", response_model=GraphEntityDetail)

@@ -132,6 +132,7 @@ def main() -> None:
                 api_key=container.settings.openai_api_key,
                 model=container.settings.openai_model,
                 max_output_tokens=container.settings.max_output_tokens,
+                preferred_language=container.settings.preferred_language,
             ),
             source_page_writer=SourcePageWriter(container.settings.wiki_dir),
             wiki_log_writer=WikiLogWriter(container.settings.wiki_dir),
