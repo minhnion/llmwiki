@@ -52,7 +52,9 @@ export function UploadPanel({ disabled, onUpload }: UploadPanelProps) {
             {file ? file.name : "Chọn tệp tài liệu"}
           </span>
           <span>
-            {file ? `${Math.ceil(file.size / 1024)} KB` : "PDF, ảnh scan, docs, bảng tính"}
+            {file
+              ? `${Math.ceil(file.size / 1024)} KB`
+              : "PDF, ODT, DOCX, ảnh scan, bảng tính"}
           </span>
           <input
             aria-label="Chọn tệp tài liệu"

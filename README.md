@@ -58,6 +58,11 @@ The application workflow is:
 3. Build and explore the knowledge graph.
 4. Ask grounded questions and inspect citations/evidence.
 
+OpenAI file input accepts common document formats including PDF, ODT, DOCX, PPTX,
+TXT, Markdown, and spreadsheets. For non-PDF documents such as ODT, the current
+ingest path receives extracted text but not embedded images or charts. Convert an
+ODT to PDF first when visual layout or embedded media is important evidence.
+
 Check health:
 
 ```bash

@@ -82,3 +82,36 @@ def test_upload_source_endpoint_saves_file_and_registers_source(tmp_path) -> Non
     with sqlite3.connect(tmp_path / "app.sqlite") as connection:
         source_count = connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
     assert source_count == 1
+
+
+def test_upload_source_endpoint_recognizes_odt(tmp_path) -> None:
+    database = SQLiteDatabase(tmp_path / "app.sqlite")
+    MigrationRunner(database).run()
+    app = create_app()
+    app.dependency_overrides[get_container] = lambda: AppContainer(
+        settings=Settings(
+            database_path=tmp_path / "app.sqlite",
+            raw_dir=tmp_path / "raw",
+            wiki_dir=tmp_path / "wiki",
+            openai_api_key="",
+        ),
+        database=database,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/sources/upload",
+        files={
+            "file": (
+                "Quy dinh.odt",
+                b"fake odt package",
+                "application/vnd.oasis.opendocument.text",
+            )
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["source_type"] == "odt"
+    assert payload["mime_type"] == "application/vnd.oasis.opendocument.text"
+    assert payload["path"].endswith(".odt")

@@ -113,6 +113,7 @@ input_file
 kèm metadata source trong một `input_text`. Cách này cho phép model xử lý:
 
 - Markdown và text document.
+- ODT, DOCX và các tài liệu văn phòng dạng text được OpenAI file input hỗ trợ.
 - PDF có text.
 - PDF scan.
 - Ảnh.
@@ -120,6 +121,10 @@ kèm metadata source trong một `input_text`. Cách này cho phép model xử l
 - Các định dạng file được OpenAI file input hỗ trợ.
 
 Hệ thống chưa OCR trước. Đối với scan/ảnh, prompt yêu cầu model mô tả bằng chứng thị giác và chép lại phần đọc được.
+
+Với tài liệu non-PDF như ODT và DOCX, OpenAI hiện chỉ đưa phần text trích xuất vào
+model context; ảnh và biểu đồ nhúng không được giữ lại. Nếu layout, hình hoặc biểu
+đồ là bằng chứng quan trọng, nên chuyển tài liệu sang PDF trước khi upload.
 
 ### Structured output
 
