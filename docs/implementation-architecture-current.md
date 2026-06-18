@@ -2,6 +2,11 @@
 
 Tài liệu này mô tả implementation đang có trong codebase tại thời điểm hiện tại. Mục tiêu là giải thích hệ thống thực sự làm gì từ lúc người dùng tải tài liệu lên cho tới khi chatbot trả lời, knowledge graph được dựng ra sao, dữ liệu được lưu ở đâu và vai trò của từng lớp.
 
+Đây là tài liệu **as-is**, không phải kiến trúc đích. Foundation artifact-first mới,
+bao gồm multi-pass compiler, coverage audit, graph tích hợp trong ingest, semantic
+artifact retrieval và source re-inspection, được mô tả tại
+`docs/artifact-first-llm-wiki-foundation.md`.
+
 ## Phạm vi hiện tại
 
 Ứng dụng đã có một pipeline end-to-end:

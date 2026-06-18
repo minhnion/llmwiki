@@ -7,6 +7,7 @@ This repository is for a general-purpose chatbot based on the LLM Wiki pattern. 
 Primary references:
 
 - `docs/llm-wiki.md`
+- `docs/artifact-first-llm-wiki-foundation.md`
 - `docs/llm-wiki-chatbot-solution.md`
 - `docs/implementation-architecture-current.md`
 
@@ -20,10 +21,17 @@ The core experiment is to compare a compounding LLM-maintained wiki against trad
 - Evidence-backed claims.
 - Domain-agnostic ontology.
 - Human review for uncertainty.
+- LLM-driven source profiling and compilation planning.
+- Artifact-first retrieval with source re-inspection.
 
-Do not introduce an external vector database by default. Use SQLite tables and SQLite FTS5 first.
+Do not introduce an external vector database by default. Store artifact embeddings in
+SQLite first and keep FTS for exact artifact/wiki retrieval.
 
 Do not make OCR, PDF parsing libraries, Excel parsing libraries, or table extraction libraries mandatory in the first ingest path. The first ingest path should use LLM/VLM multimodal and file input directly. Specialized parsers can be added later as optional fallback modules after evaluation.
+
+Do not hard-code domain taxonomies, keyword routing, section recognizers, document
+structures, or fixed raw-token chunking. Source manifests, compilation plans, artifact
+types, and semantic relations are inferred by LLM/VLM through open structured contracts.
 
 ## System Layers
 
@@ -31,12 +39,14 @@ The implementation should preserve these layers:
 
 ```text
 raw sources
-  -> multimodal ingest
-  -> evidence, claims, entities, relations
-  -> wiki update plan
-  -> markdown wiki
-  -> SQLite FTS and graph tables
-  -> chatbot answer with citations
+  -> multimodal source profiling
+  -> source manifest and dynamic compilation plan
+  -> multi-pass evidence and artifact compilation
+  -> wiki and graph integration
+  -> coverage audit and semantic indexing
+  -> artifact-first query with LLM navigation
+  -> optional source re-inspection
+  -> grounded answer with citations
   -> optional save-back-to-wiki
 ```
 
@@ -63,36 +73,40 @@ Frontend:
 
 ## Ingest Workflow
 
-Implement ingest as a resumable job:
+Implement ingest as a resumable staged job:
 
 1. Register source metadata and content hash.
-2. Send the file or file segment to a multimodal model.
-3. Extract structured source summary, evidence, claims, entities, relations, contradictions, and review items.
-4. Search existing wiki and claim/entity state through SQLite FTS.
-5. Generate a wiki update plan.
-6. Validate the plan.
-7. Write deterministic markdown pages.
-8. Update SQLite tables.
-9. Append to wiki log.
+2. Let LLM/VLM profile the source and infer its structure/modalities.
+3. Generate a dynamic compilation plan with source-local content unit IDs.
+4. Run model-directed passes to create evidence and open-type artifacts.
+5. Match candidates semantically against existing artifacts/wiki.
+6. Validate and integrate artifacts and deterministic markdown pages.
+7. Build/update provenance and semantic graph in the same ingest pipeline.
+8. Run coverage audit and follow-up compilation when required.
+9. Update artifact FTS, embeddings, knowledge maps, and wiki log.
 
-For large documents, process logical batches:
+For files beyond provider/context limits, physical batching is a transport concern:
 
-- PDF by page range or section.
-- Scanned PDF by page image batches.
-- Spreadsheet by workbook summary and sheet-level passes.
-- Slide deck by slide batches.
-- Long document by section.
+- Use natural provider boundaries such as pages, slides, sheets, images, or model-inferred
+  source units.
+- Do not turn these batches into the primary retrieval corpus.
+- Run a global synthesis/coverage pass after batch processing.
 
 ## Query Workflow
 
-Chat answers should retrieve from multiple local layers:
+Chat answers should retrieve compiled knowledge through:
 
-- `wiki/index.md`, `wiki/schema.md`, and relevant wiki pages.
-- SQLite FTS evidence.
-- SQLite FTS claims and entities.
-- Graph neighbors from page/entity/relation tables.
+- LLM semantic probes and hierarchical knowledge-map navigation.
+- Artifact embeddings stored in SQLite.
+- Artifact/wiki FTS for exact retrieval.
+- Graph expansion from semantically selected artifact seeds.
+- LLM reranking and structured context assembly.
 
 Important answers need citations. If the available evidence is insufficient, answer that the system does not have enough evidence instead of inventing.
+
+Before returning insufficient, detect whether likely sources can be reopened. Source
+re-inspection should compile missing artifacts and retry the answer when budget permits.
+Never attach a fallback citation that does not support the answer.
 
 Useful answers may be saved into `wiki/queries/` or `wiki/synthesis/` and treated as derived wiki artifacts.
 
@@ -129,6 +143,9 @@ Represent at least:
 
 Every semantic relation should have evidence or be marked low-confidence/review-only.
 
+Graph creation/update belongs to ingest. The graph build command remains a maintenance,
+repair, or explicit rebuild operation.
+
 ## Evaluation Requirements
 
 Keep the system evaluable against these variants:
@@ -145,9 +162,9 @@ Measure correctness, faithfulness, citation quality, contradiction handling, lat
 This repository currently has a Python/FastAPI backend plus a React/Vite/Tailwind
 workbench. The UI supports HTTP upload, ingest, source scoping, grounded chat with
 citations/evidence trace, knowledge graph build/visualization, entity inspection,
-and contradiction review. There is no default source seed. Runtime data starts
-empty, and prompts preserve the source/question language with Vietnamese as the
-configured fallback.
+and contradiction review. There is no default source seed; runtime sources are
+user-managed and may be present locally. Prompts preserve the source/question language
+with Vietnamese as the configured fallback.
 
 ## Project Commands
 

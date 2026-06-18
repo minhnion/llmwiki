@@ -1,10 +1,17 @@
 # LLM Wiki
 
-General-purpose LLM Wiki chatbot experiment. The project starts SQLite-first and multimodal-first: raw files stay immutable, LLM/VLM ingest builds a persistent markdown wiki, and SQLite stores evidence, claims, graph state, jobs, chats, and evals.
+General-purpose LLM Wiki chatbot experiment. The target foundation is SQLite-first,
+multimodal-first, and artifact-first: LLM/VLM compiles immutable raw sources into an
+evidence-backed wiki, open knowledge artifacts, semantic indexes, and an integrated graph.
 
 ## Current Status
 
-The application now includes source upload, OpenAI multimodal ingest, source-grounded chat, SQLite knowledge graph build/visualization, contradiction inspection, and a React workbench. Evaluation workflows will be added after representative data exists.
+The current implementation includes source upload, one-pass OpenAI multimodal ingest,
+source-grounded chat, SQLite graph build/visualization, contradiction inspection, and
+a React workbench. The next foundation upgrade is specified in
+`docs/artifact-first-llm-wiki-foundation.md`: LLM-driven multi-pass compilation,
+coverage audit, graph integration during ingest, artifact semantic retrieval, and
+source re-inspection.
 
 ## Quick Start
 
@@ -55,8 +62,12 @@ The application workflow is:
 
 1. Upload a source file.
 2. Ingest the registered source with the multimodal model.
-3. Build and explore the knowledge graph.
+3. Build and explore the knowledge graph using the current manual graph step.
 4. Ask grounded questions and inspect citations/evidence.
+
+The manual graph step describes the current implementation. In the target foundation,
+graph integration runs automatically inside ingest; manual build becomes an admin
+rebuild/repair command.
 
 OpenAI file input accepts common document formats including PDF, ODT, DOCX, PPTX,
 TXT, Markdown, and spreadsheets. For non-PDF documents such as ODT, the current
@@ -184,6 +195,7 @@ pnpm build
 ## Key Docs
 
 - `docs/llm-wiki.md`
+- `docs/artifact-first-llm-wiki-foundation.md`
 - `docs/llm-wiki-chatbot-solution.md`
 - `docs/implementation-architecture-current.md`
 - `AGENTS.md`

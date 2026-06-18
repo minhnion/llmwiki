@@ -9,6 +9,7 @@ The project goal is to test whether a persistent, LLM-maintained markdown wiki p
 Read these files before making architecture or implementation decisions:
 
 - `docs/llm-wiki.md`
+- `docs/artifact-first-llm-wiki-foundation.md`
 - `docs/llm-wiki-chatbot-solution.md`
 - `docs/implementation-architecture-current.md`
 
@@ -16,13 +17,20 @@ Read these files before making architecture or implementation decisions:
 
 - Use SQLite as the primary storage layer for the MVP.
 - Do not add an external vector database unless the user explicitly asks or evaluation proves SQLite FTS is insufficient.
-- Use SQLite FTS5 for first-pass retrieval over wiki pages, evidence, claims, and entities.
+- Build toward artifact-first retrieval with LLM semantic navigation, artifact embeddings,
+  artifact/wiki FTS, graph expansion, and LLM reranking.
 - Treat markdown wiki files as first-class generated artifacts, not secondary exports.
 - Keep raw sources immutable.
 - Use LLM/VLM multimodal ingest directly for the MVP.
 - Do not make OCR, PDF parsers, Excel parsers, or document-layout libraries mandatory in the first implementation.
 - OCR and specialized parsers are optional fallback modules after evaluation shows a quality, cost, or auditability gap.
 - Keep the ontology domain-agnostic. Do not hard-code a domain taxonomy, keyword list, or business-specific entity schema.
+- Do not use fixed raw chunks or overlapping token windows as the primary retrieval corpus.
+- Do not hard-code document structures, section recognizers, domain regexes, or keyword routing.
+- Source structure, compilation passes, artifact types, and relation types should be
+  inferred by LLM/VLM through open structured contracts.
+- Treat graph integration, contradiction detection, coverage audit, and semantic indexing
+  as stages of ingest. Manual graph build is a maintenance/rebuild action, not the target user flow.
 
 ## Knowledge Model
 
@@ -31,6 +39,7 @@ Preserve these layers:
 - Raw sources: immutable user-provided files.
 - Evidence: source-grounded snippets, visual descriptions, table summaries, page/sheet/cell locators.
 - Claims: atomic factual statements linked to evidence.
+- Artifacts: open-type, machine-addressable knowledge units linked to evidence.
 - Wiki: markdown pages with frontmatter, wikilinks, summaries, synthesis, contradictions, and open questions.
 - Graph: SQLite tables for page links, entities, claims, relations, contradictions, and provenance.
 
@@ -52,21 +61,27 @@ Important factual answers must cite raw evidence or source-backed wiki pages. Do
 - Use Pydantic models for structured LLM outputs.
 - Keep LLM prompts and schemas versioned in the repo.
 - Make ingest jobs resumable and transaction-oriented.
+- Implement ingest as source profiling, dynamic compilation planning, multi-pass knowledge
+  compilation, artifact/wiki/graph integration, coverage audit, and semantic indexing.
+- Use unique evidence IDs in extraction contracts; never use a non-unique locator string
+  as the identity joining claims to evidence.
 - Keep file writes deterministic: stable slugs, stable frontmatter fields, stable ordering.
 - Use migrations for SQLite schema changes once code exists.
 - Avoid introducing heavy orchestration frameworks until the local workflow is too complex to manage explicitly.
 
 ## Retrieval Guidance
 
-First retrieval implementation should combine:
+Target retrieval should combine:
 
-- SQLite FTS over wiki pages.
-- SQLite FTS over evidence.
-- SQLite FTS over claims/entities.
-- Graph expansion from page/entity/relation tables.
-- LLM reranking inside the answer prompt.
+- LLM-generated semantic probes and hierarchical navigation through knowledge maps.
+- Semantic search over generated artifacts, with vectors stored in SQLite initially.
+- SQLite FTS over artifacts/wiki for exact names, identifiers, dates, numbers, and phrases.
+- Graph expansion from selected artifact seeds.
+- LLM reranking, context assembly, and grounding validation.
+- Direct source re-inspection when compiled artifacts are incomplete or require verification.
 
-If vector search is added later, implement it as an optional variant for evaluation, not as a replacement for the wiki/evidence architecture.
+Do not vector-search arbitrary raw chunks in the core path. Raw sources may be reopened
+by provenance pointer or source manifest for verification and on-demand recompilation.
 
 ## Evaluation Guidance
 
@@ -94,9 +109,9 @@ Keep the UI dense, operational, and suitable for repeated knowledge work.
 The repository currently has a Python/FastAPI backend plus a React/Vite/Tailwind
 workbench. The UI supports HTTP upload, ingest, source scoping, grounded chat with
 citations/evidence trace, knowledge graph build/visualization, entity inspection,
-and contradiction review. Runtime source data is intentionally empty until a user
-uploads a file. Ingest and answer prompts preserve the source/question language,
-with Vietnamese configured as the fallback language.
+and contradiction review. The repository has no default source seed; runtime sources
+are user-managed and may be present locally. Ingest and answer prompts preserve the
+source/question language, with Vietnamese configured as the fallback language.
 
 ## Project Commands
 
