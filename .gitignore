@@ -21,6 +21,7 @@ raw/attachments/*
 wiki/log.md
 wiki/sources/*
 wiki/entities/*
+wiki/knowledge/*
 wiki/concepts/*
 wiki/events/*
 wiki/methods/*
@@ -31,6 +32,7 @@ wiki/synthesis/*
 wiki/queries/*
 !wiki/sources/.gitkeep
 !wiki/entities/.gitkeep
+!wiki/knowledge/.gitkeep
 !wiki/concepts/.gitkeep
 !wiki/events/.gitkeep
 !wiki/methods/.gitkeep

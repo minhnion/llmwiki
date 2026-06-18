@@ -232,8 +232,12 @@ async def _run_graph_build_test(tmp_path) -> None:
     with sqlite3.connect(database.database_path) as connection:
         relation_count = connection.execute("SELECT COUNT(*) FROM relation_edges").fetchone()[0]
         run_count = connection.execute("SELECT COUNT(*) FROM graph_runs").fetchone()[0]
+        resolved_subjects = connection.execute(
+            "SELECT COUNT(*) FROM relation_edges WHERE subject_entity_id IS NOT NULL"
+        ).fetchone()[0]
 
     assert relation_count == 3
+    assert resolved_subjects == 3
     assert run_count == 2
     assert result.graph_run_id in (wiki_dir / "log.md").read_text(encoding="utf-8")
 

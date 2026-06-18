@@ -14,6 +14,8 @@ from backend.app.repositories.extractions import SQLiteExtractionRepository
 from backend.app.repositories.graph import SQLiteGraphRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
+from backend.app.repositories.wiki import SQLiteWikiRepository
+from backend.app.services.knowledge_page_writer import KnowledgePageWriter
 from backend.app.services.llm_client import OpenAIResponsesClient
 from backend.app.services.source_ingest import SourceIngestService
 from backend.app.services.source_page_writer import SourcePageWriter
@@ -138,6 +140,8 @@ def main() -> None:
             ),
             graph_builder=build_graph_builder(container),
             source_page_writer=SourcePageWriter(container.settings.wiki_dir),
+            knowledge_page_writer=KnowledgePageWriter(container.settings.wiki_dir),
+            wiki_repository=SQLiteWikiRepository(container.database),
             wiki_log_writer=WikiLogWriter(container.settings.wiki_dir),
             max_file_bytes=container.settings.max_file_bytes,
             model=container.settings.openai_model,
@@ -157,6 +161,7 @@ def main() -> None:
         print(f"review_items: {len(result.extraction.review_items)}")
         print(f"compiler_run: {result.compiler_run_id}")
         print(f"artifacts: {len(result.compilation.artifacts)}")
+        print(f"wiki_pages: {len(result.wiki_pages)}")
         print(f"coverage: {result.coverage.coverage_status}")
         print(f"graph_run: {result.graph.graph_run_id}")
         print(f"relations: {result.graph.relation_count}")

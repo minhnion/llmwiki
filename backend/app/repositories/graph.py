@@ -206,11 +206,7 @@ class SQLiteGraphRepository(SQLiteRepository):
                 if relation.evidence_id not in valid_evidence_ids:
                     continue
                 subject_entity_id = self._resolve_entity_id(connection, relation.subject)
-                object_entity_id = (
-                    self._resolve_entity_id(connection, relation.object)
-                    if relation.object_type == "entity"
-                    else None
-                )
+                object_entity_id = self._resolve_entity_id(connection, relation.object)
                 current_relation_id = relation_edge_id(
                     relation.claim_id,
                     relation.evidence_id,
@@ -225,7 +221,7 @@ class SQLiteGraphRepository(SQLiteRepository):
                     predicate=relation.predicate,
                     object_entity_id=object_entity_id,
                     object_value=relation.object,
-                    object_type=relation.object_type,
+                    object_type="entity" if object_entity_id else relation.object_type,
                     claim_id=relation.claim_id,
                     evidence_id=relation.evidence_id,
                     source_id=context.source_id,

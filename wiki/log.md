@@ -25,3 +25,27 @@ Chưa có hoạt động runtime.
 - artifacts: 5
 - coverage: `incomplete`
 - graph_run_id: `grun_f85e763698244f48`
+
+## [2026-06-18T09:54:15+00:00] query | qry_86b2b0db9ee24733
+
+- question: Công thức tính tiền lãi của chứng chỉ tiền gửi là gì?
+- confidence: `insufficient`
+- citations: 1
+
+## [2026-06-18T09:54:15+00:00] query | qry_33389b812e604ff1
+
+- question: Điều khoản này có hiệu lực từ ngày nào?
+- confidence: `insufficient`
+- citations: 1
+
+## [2026-06-18T09:54:15+00:00] query | qry_0440c62b836f490b
+
+- question: Chứng chỉ tiền gửi có được chuyển quyền sở hữu hoặc dùng làm tài sản bảo đảm không?
+- confidence: `medium`
+- citations: 2
+
+## [2026-06-18T09:54:15+00:00] query | qry_33e4a58b14274f80
+
+- question: Nếu MB không khắc phục sự kiện vi phạm sau 30 ngày làm việc thì người sở hữu có quyền gì?
+- confidence: `high`
+- citations: 4

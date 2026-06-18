@@ -1,9 +1,4 @@
-from backend.app.domain.query import (
-    EvidenceAssessment,
-    EvidenceCandidate,
-    EvidenceRankingResult,
-    QueryPlan,
-)
+from backend.app.domain.query import EvidenceCandidate, EvidenceRankingResult, QueryPlan
 from backend.app.services.query_contracts import QueryLLMClient
 
 
@@ -51,25 +46,6 @@ class EvidenceRanker:
             for assessment in ranking.assessments
             if assessment.evidence_id in valid_ids
         ]
-        if not assessments:
-            assessments = [
-                EvidenceAssessment(
-                    evidence_id=candidate.evidence_id,
-                    relevance="background",
-                    support_type="supports",
-                    reason="Được chọn dự phòng theo retrieval score.",
-                    confidence=candidate.confidence,
-                )
-                for candidate in candidates[:max_evidence]
-            ]
-        if not selected_ids:
-            selected_ids = [candidate.evidence_id for candidate in candidates[:max_evidence]]
-            rejected_ids = [
-                candidate.evidence_id
-                for candidate in candidates
-                if candidate.evidence_id not in selected_ids
-            ]
-
         return EvidenceRankingResult(
             selected_evidence_ids=selected_ids,
             rejected_evidence_ids=list(dict.fromkeys(rejected_ids)),

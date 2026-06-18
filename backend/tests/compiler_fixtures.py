@@ -7,6 +7,7 @@ from backend.app.domain.compiler import (
     CompiledArtifact,
     CompiledEvidence,
     CompiledRelation,
+    CompiledSemanticNode,
     CoverageReport,
     CoverageUnitAssessment,
     KnowledgeLens,
@@ -15,6 +16,8 @@ from backend.app.domain.compiler import (
     SourceManifest,
     SourceProfile,
     SourceUnit,
+    WikiIntegrationPlan,
+    WikiPagePlan,
 )
 from backend.app.domain.graph import (
     ClaimGraphContext,
@@ -28,10 +31,12 @@ from backend.app.repositories.extractions import SQLiteExtractionRepository
 from backend.app.repositories.graph import SQLiteGraphRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
+from backend.app.repositories.wiki import SQLiteWikiRepository
 from backend.app.services.contradiction_detector import ContradictionDetector
 from backend.app.services.entity_page_writer import EntityPageWriter
 from backend.app.services.graph_builder import GraphBuilder
 from backend.app.services.graph_extractor import GraphExtractor
+from backend.app.services.knowledge_page_writer import KnowledgePageWriter
 from backend.app.services.source_ingest import SourceIngestService
 from backend.app.services.source_page_writer import SourcePageWriter
 from backend.app.services.wiki_log import WikiLogWriter
@@ -108,6 +113,7 @@ class FakeCompilerClient:
             evidence_items=[
                 CompiledEvidence(
                     local_id="ev_wiki",
+                    source_unit_ids=["unit_wiki"],
                     locator=_locator("section", "concept"),
                     modality="text",
                     content="LLM Wiki persists source-grounded knowledge artifacts.",
@@ -116,6 +122,7 @@ class FakeCompilerClient:
                 ),
                 CompiledEvidence(
                     local_id="ev_rag",
+                    source_unit_ids=["unit_rag"],
                     locator=_locator("section", "concept"),
                     modality="text",
                     content="Traditional RAG retrieves raw chunks at query time.",
@@ -124,6 +131,7 @@ class FakeCompilerClient:
                 ),
                 CompiledEvidence(
                     local_id="ev_caveat",
+                    source_unit_ids=["unit_caveat"],
                     locator=_locator("section", "caveat"),
                     modality="text",
                     content="This variant does not persist generated pages.",
@@ -141,23 +149,34 @@ class FakeCompilerClient:
                     aliases=["Wiki LLM"],
                     scope=[],
                     evidence_local_ids=["ev_wiki", "ev_caveat"],
+                    source_unit_ids=["unit_wiki", "unit_caveat"],
                     related_artifact_local_ids=["art_rag"],
                     statements=[
                         ArtifactStatement(
+                            local_id="stmt_wiki_persists",
+                            statement_type="fact",
                             text="LLM Wiki persists source-grounded knowledge artifacts.",
                             subject="LLM Wiki",
                             predicate="persists",
                             object="source-grounded knowledge artifacts",
+                            object_type="concept",
                             evidence_local_ids=["ev_wiki"],
+                            source_unit_ids=["unit_wiki"],
+                            qualifiers=[],
                             confidence=0.92,
                             status="active",
                         ),
                         ArtifactStatement(
+                            local_id="stmt_wiki_caveat",
+                            statement_type="qualification",
                             text="This LLM Wiki variant does not persist generated pages.",
                             subject="LLM Wiki",
                             predicate="does not persist",
                             object="generated pages",
+                            object_type="concept",
                             evidence_local_ids=["ev_caveat"],
+                            source_unit_ids=["unit_caveat"],
+                            qualifiers=[],
                             confidence=0.82,
                             status="active",
                         ),
@@ -176,14 +195,20 @@ class FakeCompilerClient:
                     aliases=["RAG"],
                     scope=[],
                     evidence_local_ids=["ev_rag"],
+                    source_unit_ids=["unit_rag"],
                     related_artifact_local_ids=["art_wiki"],
                     statements=[
                         ArtifactStatement(
+                            local_id="stmt_rag_retrieves",
+                            statement_type="fact",
                             text="Traditional RAG retrieves raw chunks at query time.",
                             subject="Traditional RAG",
                             predicate="retrieves",
                             object="raw chunks at query time",
+                            object_type="concept",
                             evidence_local_ids=["ev_rag"],
+                            source_unit_ids=["unit_rag"],
+                            qualifiers=[],
                             confidence=0.89,
                             status="active",
                         )
@@ -192,6 +217,30 @@ class FakeCompilerClient:
                     status="active",
                     review_status="unreviewed",
                     metadata=[],
+                ),
+            ],
+            semantic_nodes=[
+                CompiledSemanticNode(
+                    local_id="node_llm_wiki",
+                    name="LLM Wiki",
+                    node_type="concept",
+                    aliases=["Wiki LLM"],
+                    description="Persistent source-grounded wiki pattern.",
+                    evidence_local_ids=["ev_wiki"],
+                    source_unit_ids=["unit_wiki"],
+                    confidence=0.92,
+                    status="active",
+                ),
+                CompiledSemanticNode(
+                    local_id="node_rag",
+                    name="Traditional RAG",
+                    node_type="concept",
+                    aliases=["RAG"],
+                    description="Query-time retrieval pattern.",
+                    evidence_local_ids=["ev_rag"],
+                    source_unit_ids=["unit_rag"],
+                    confidence=0.9,
+                    status="active",
                 ),
             ],
             relations=[
@@ -223,6 +272,38 @@ class FakeCompilerClient:
         report = self.coverage_reports[min(self.audit_calls, len(self.coverage_reports) - 1)]
         self.audit_calls += 1
         return report
+
+    async def plan_wiki_integration(
+        self,
+        source: SourceRef,
+        manifest: SourceManifest,
+        compilation: CompilationBundle,
+    ) -> WikiIntegrationPlan:
+        return WikiIntegrationPlan(
+            pages=[
+                WikiPagePlan(
+                    local_id="page_wiki",
+                    title="LLM Wiki",
+                    page_type="concept",
+                    summary="Persistent source-grounded knowledge pattern.",
+                    artifact_local_ids=["art_wiki"],
+                    related_page_local_ids=["page_rag"],
+                    confidence=0.92,
+                    review_status="unreviewed",
+                ),
+                WikiPagePlan(
+                    local_id="page_rag",
+                    title="Traditional RAG",
+                    page_type="concept",
+                    summary="Query-time raw chunk retrieval pattern.",
+                    artifact_local_ids=["art_rag"],
+                    related_page_local_ids=["page_wiki"],
+                    confidence=0.9,
+                    review_status="unreviewed",
+                ),
+            ],
+            notes=[],
+        )
 
 
 class FakeGraphClient:
@@ -278,6 +359,8 @@ def build_test_ingest_service(
             wiki_log_writer=WikiLogWriter(wiki_dir),
         ),
         source_page_writer=SourcePageWriter(wiki_dir),
+        knowledge_page_writer=KnowledgePageWriter(wiki_dir),
+        wiki_repository=SQLiteWikiRepository(database),
         wiki_log_writer=WikiLogWriter(wiki_dir),
         max_file_bytes=50_000_000,
         model="fake-model",
@@ -317,6 +400,7 @@ def _follow_up_result(plan: CompilationPassPlan) -> CompilationPassResult:
         pass_id=plan.pass_id,
         evidence_items=[],
         artifacts=[],
+        semantic_nodes=[],
         relations=[],
         review_items=[],
         covered_unit_ids=plan.target_unit_ids,

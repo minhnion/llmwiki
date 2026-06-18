@@ -308,6 +308,106 @@ async def _run_insufficient_query_test(tmp_path) -> None:
     assert run_count == 1
 
 
+def test_ranker_does_not_force_select_irrelevant_candidates() -> None:
+    class RejectingClient(FakeQueryLLMClient):
+        async def rank_evidence(self, question, plan, candidates, max_evidence):
+            return EvidenceRankingResult(
+                selected_evidence_ids=[],
+                rejected_evidence_ids=[item.evidence_id for item in candidates],
+                assessments=[],
+                contradictions=[],
+                missing_evidence=["No direct evidence."],
+                reasoning_summary="All candidates are irrelevant.",
+            )
+
+    candidate = EvidenceCandidate(
+        evidence_id="ev_irrelevant",
+        source_id="src_test",
+        source_title="Test",
+        source_path="test.md",
+        wiki_page_path="",
+        locator="section: other",
+        modality="text",
+        text="Unrelated text.",
+        summary="Unrelated.",
+        confidence=0.9,
+        claim_ids=[],
+        claims=[],
+        entities=[],
+        retrieval_score=1.0,
+        retrieval_channels=["evidence"],
+    )
+    plan = asyncio.run(
+        RejectingClient().plan_query(QueryAskCommand(question="A missing fact?"))
+    )
+
+    ranking = asyncio.run(
+        EvidenceRanker(RejectingClient()).rank(
+            "A missing fact?",
+            plan,
+            [candidate],
+            max_evidence=4,
+        )
+    )
+
+    assert ranking.selected_evidence_ids == []
+
+
+def test_synthesizer_does_not_add_fallback_citation() -> None:
+    class CitationlessClient(FakeQueryLLMClient):
+        async def synthesize_answer(self, question, plan, evidence, ranking):
+            return QuerySynthesisResult(
+                answer="The evidence is insufficient.",
+                confidence="high",
+                citations=[],
+                used_claim_ids=[],
+                matched_entities=[],
+                contradictions=[],
+                open_questions=["Missing direct support."],
+                follow_up_questions=[],
+            )
+
+    candidate = EvidenceCandidate(
+        evidence_id="ev_background",
+        source_id="src_test",
+        source_title="Test",
+        source_path="test.md",
+        wiki_page_path="",
+        locator="section: background",
+        modality="text",
+        text="Background only.",
+        summary="Background.",
+        confidence=0.9,
+        claim_ids=[],
+        claims=[],
+        entities=[],
+        retrieval_score=1.0,
+        retrieval_channels=["evidence"],
+    )
+    client = CitationlessClient()
+    plan = asyncio.run(client.plan_query(QueryAskCommand(question="Unsupported?")))
+    ranking = EvidenceRankingResult(
+        selected_evidence_ids=[candidate.evidence_id],
+        rejected_evidence_ids=[],
+        assessments=[],
+        contradictions=[],
+        missing_evidence=["Direct support."],
+        reasoning_summary="Only background evidence.",
+    )
+
+    result = asyncio.run(
+        AnswerSynthesizer(client).synthesize(
+            "Unsupported?",
+            plan,
+            [candidate],
+            ranking,
+        )
+    )
+
+    assert result.citations == []
+    assert result.confidence == "low"
+
+
 def test_query_api_route_uses_query_engine(monkeypatch) -> None:
     plan = QueryPlan(
         rewritten_question="What is LLM Wiki?",

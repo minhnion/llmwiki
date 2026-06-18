@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -65,10 +67,21 @@ class SourceManifest(BaseModel):
     @model_validator(mode="after")
     def validate_manifest_references(self) -> "SourceManifest":
         unit_ids = [unit.local_id for unit in self.content_units]
+        if not unit_ids:
+            raise ValueError("Source manifest must contain semantic content units.")
         if len(unit_ids) != len(set(unit_ids)):
             raise ValueError("Source manifest content unit local IDs must be unique.")
+        pass_ids = [plan.pass_id for plan in self.compilation_plan]
+        if not pass_ids:
+            raise ValueError("Source manifest must contain a compilation plan.")
+        if len(pass_ids) != len(set(pass_ids)):
+            raise ValueError("Source manifest compilation pass IDs must be unique.")
         valid_unit_ids = set(unit_ids)
         for plan in self.compilation_plan:
+            if not plan.target_unit_ids:
+                raise ValueError(
+                    f"Compilation pass {plan.pass_id} must target source units."
+                )
             unknown = set(plan.target_unit_ids) - valid_unit_ids
             if unknown:
                 raise ValueError(
@@ -80,6 +93,7 @@ class SourceManifest(BaseModel):
 
 class CompiledEvidence(BaseModel):
     local_id: str
+    source_unit_ids: list[str]
     locator: SourceLocator
     modality: str
     content: str
@@ -90,13 +104,18 @@ class CompiledEvidence(BaseModel):
 
 
 class ArtifactStatement(BaseModel):
+    local_id: str
+    statement_type: str
     text: str
     subject: str
     predicate: str
     object: str
+    object_type: str
     evidence_local_ids: list[str]
+    source_unit_ids: list[str]
+    qualifiers: list[OpenMetadataItem]
     confidence: float = Field(ge=0, le=1)
-    status: str
+    status: Literal["active", "uncertain", "contradicted", "superseded", "needs_review"]
 
     model_config = ConfigDict(extra="forbid")
 
@@ -110,11 +129,12 @@ class CompiledArtifact(BaseModel):
     aliases: list[str]
     scope: list[OpenMetadataItem]
     evidence_local_ids: list[str]
+    source_unit_ids: list[str]
     related_artifact_local_ids: list[str]
     statements: list[ArtifactStatement]
     confidence: float = Field(ge=0, le=1)
-    status: str
-    review_status: str
+    status: Literal["active", "uncertain", "contradicted", "superseded", "needs_review"]
+    review_status: Literal["unreviewed"]
     metadata: list[OpenMetadataItem]
 
     model_config = ConfigDict(extra="forbid")
@@ -128,7 +148,7 @@ class CompiledRelation(BaseModel):
     evidence_local_ids: list[str]
     qualifiers: list[OpenMetadataItem]
     confidence: float = Field(ge=0, le=1)
-    status: str
+    status: Literal["active", "uncertain", "contradicted", "superseded", "needs_review"]
 
     model_config = ConfigDict(extra="forbid")
 
@@ -144,10 +164,25 @@ class CompilerReviewItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class CompiledSemanticNode(BaseModel):
+    local_id: str
+    name: str
+    node_type: str
+    aliases: list[str]
+    description: str
+    evidence_local_ids: list[str]
+    source_unit_ids: list[str]
+    confidence: float = Field(ge=0, le=1)
+    status: Literal["active", "uncertain", "needs_review"]
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class CompilationPassResult(BaseModel):
     pass_id: str
     evidence_items: list[CompiledEvidence]
     artifacts: list[CompiledArtifact]
+    semantic_nodes: list[CompiledSemanticNode]
     relations: list[CompiledRelation]
     review_items: list[CompilerReviewItem]
     covered_unit_ids: list[str]
@@ -179,7 +214,7 @@ class CoverageGap(BaseModel):
 
 class CoverageUnitAssessment(BaseModel):
     unit_id: str
-    status: str
+    status: Literal["complete", "incomplete", "needs_review"]
     represented_knowledge: list[str]
     missing_knowledge: list[str]
     confidence: float = Field(ge=0, le=1)
@@ -188,7 +223,7 @@ class CoverageUnitAssessment(BaseModel):
 
 
 class CoverageReport(BaseModel):
-    coverage_status: str
+    coverage_status: Literal["complete", "incomplete", "needs_review"]
     covered_unit_ids: list[str]
     unit_assessments: list[CoverageUnitAssessment]
     missing_or_weak_areas: list[CoverageGap]
@@ -202,12 +237,47 @@ class CoverageReport(BaseModel):
 class CompilationBundle(BaseModel):
     evidence_items: list[CompiledEvidence]
     artifacts: list[CompiledArtifact]
+    semantic_nodes: list[CompiledSemanticNode]
     relations: list[CompiledRelation]
     review_items: list[CompilerReviewItem]
     covered_unit_ids: list[str]
     notes: list[str]
 
     model_config = ConfigDict(extra="forbid")
+
+
+class WikiPagePlan(BaseModel):
+    local_id: str
+    title: str
+    page_type: str
+    summary: str
+    artifact_local_ids: list[str]
+    related_page_local_ids: list[str]
+    confidence: float = Field(ge=0, le=1)
+    review_status: Literal["unreviewed"]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class WikiIntegrationPlan(BaseModel):
+    pages: list[WikiPagePlan]
+    notes: list[str]
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_page_references(self) -> "WikiIntegrationPlan":
+        page_ids = [page.local_id for page in self.pages]
+        if len(page_ids) != len(set(page_ids)):
+            raise ValueError("Wiki page local IDs must be unique.")
+        valid_page_ids = set(page_ids)
+        for page in self.pages:
+            unknown = set(page.related_page_local_ids) - valid_page_ids
+            if unknown:
+                raise ValueError(
+                    f"Wiki page {page.local_id} references unknown pages: {sorted(unknown)}"
+                )
+        return self
 
 
 class CompilerPassStatus(BaseModel):
@@ -240,6 +310,7 @@ class CompilationInspection(BaseModel):
     passes: list[CompilerPassStatus]
     coverage_reports: list[CoverageReport]
     artifacts: list[CompiledArtifact]
+    semantic_nodes: list[CompiledSemanticNode]
 
     model_config = ConfigDict(extra="forbid")
 
@@ -247,3 +318,4 @@ class CompilationInspection(BaseModel):
 SOURCE_MANIFEST_JSON_SCHEMA = SourceManifest.model_json_schema()
 COMPILATION_PASS_JSON_SCHEMA = CompilationPassResult.model_json_schema()
 COVERAGE_REPORT_JSON_SCHEMA = CoverageReport.model_json_schema()
+WIKI_INTEGRATION_PLAN_JSON_SCHEMA = WikiIntegrationPlan.model_json_schema()

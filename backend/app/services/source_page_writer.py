@@ -2,7 +2,7 @@ from pathlib import Path
 
 from backend.app.core.clock import utc_now_iso
 from backend.app.core.hashing import sha256_file
-from backend.app.core.ids import wiki_page_id
+from backend.app.core.ids import artifact_id, statement_id, wiki_page_id
 from backend.app.core.text import slugify
 from backend.app.domain.compiler import CompilationBundle
 from backend.app.domain.extraction import IngestExtractionResult
@@ -18,12 +18,21 @@ class SourcePageWriter:
         source: SourceRef,
         extraction: IngestExtractionResult,
         compilation: CompilationBundle | None = None,
+        coverage_status: str = "needs_review",
+        compiler_version: str = "",
     ) -> WikiPage:
         page_dir = self.wiki_dir / "sources"
         page_dir.mkdir(parents=True, exist_ok=True)
         page_path = page_dir / f"{slugify(extraction.source_title or source.title)}-{source.id}.md"
         now = utc_now_iso()
-        body = self._render_body(source, extraction, now, compilation)
+        body = self._render_body(
+            source,
+            extraction,
+            now,
+            compilation,
+            coverage_status,
+            compiler_version,
+        )
         temporary_path = page_path.with_suffix(".md.tmp")
         temporary_path.write_text(body, encoding="utf-8")
         temporary_path.replace(page_path)
@@ -36,6 +45,10 @@ class SourcePageWriter:
             body=body,
             summary=extraction.source_summary,
             source_ids=(source.id,),
+            artifact_ids=tuple(
+                artifact_id(source.id, artifact.local_id)
+                for artifact in (compilation.artifacts if compilation else [])
+            ),
             sha256=sha256_file(page_path),
             created_at=now,
             updated_at=now,
@@ -47,21 +60,40 @@ class SourcePageWriter:
         extraction: IngestExtractionResult,
         timestamp: str,
         compilation: CompilationBundle | None,
+        coverage_status: str,
+        compiler_version: str,
     ) -> str:
         artifact_lines = self._artifact_lines(compilation)
+        artifact_ids = [
+            artifact_id(source.id, artifact.local_id)
+            for artifact in (compilation.artifacts if compilation else [])
+        ]
+        claim_ids = [
+            statement_id(source.id, artifact.local_id, statement.local_id)
+            for artifact in (compilation.artifacts if compilation else [])
+            for statement in artifact.statements
+        ]
+        status = "active" if coverage_status == "complete" else "needs_review"
         return "\n".join(
             [
                 "---",
                 f"id: {wiki_page_id(source.id)}",
                 f"title: {self._yaml_string(extraction.source_title or source.title)}",
                 "type: source",
-                "status: ingested",
+                f"status: {status}",
+                "review_status: unreviewed",
+                f"coverage_status: {coverage_status}",
+                f"compiler_version: {compiler_version}",
                 f"created_at: {timestamp}",
                 f"updated_at: {timestamp}",
                 f"source_id: {source.id}",
                 f"source_sha256: {source.sha256}",
                 f"source_type: {source.source_type}",
                 f"source_path: {self._yaml_string(str(source.path))}",
+                "sources:",
+                f"  - {source.id}",
+                *self._yaml_list("artifacts", artifact_ids),
+                *self._yaml_list("claims", claim_ids),
                 f"confidence: {self._confidence_label(extraction)}",
                 "---",
                 "",
@@ -96,6 +128,11 @@ class SourcePageWriter:
                 "",
                 *artifact_lines,
                 "",
+                "## Trạng thái biên dịch",
+                "",
+                f"- Coverage: `{coverage_status}`",
+                f"- Compiler: `{compiler_version}`",
+                "",
                 "## Thực thể",
                 "",
                 *[
@@ -119,14 +156,31 @@ class SourcePageWriter:
     def _artifact_lines(compilation: CompilationBundle | None) -> list[str]:
         if compilation is None or not compilation.artifacts:
             return ["- Không có."]
-        return [
-            (
-                f"- **{artifact.title}** (`{artifact.artifact_type}`, "
-                f"`{artifact.local_id}`): {artifact.summary} "
-                f"(độ tin cậy {artifact.confidence:.2f})"
+        lines: list[str] = []
+        for artifact in compilation.artifacts:
+            lines.extend(
+                [
+                    (
+                        f"### {artifact.title} (`{artifact.artifact_type}`, "
+                        f"`{artifact.local_id}`)"
+                    ),
+                    "",
+                    artifact.summary,
+                    "",
+                    artifact.content,
+                    "",
+                    "Atomic statements:",
+                    *[
+                        (
+                            f"- `{statement.local_id}` {statement.text} "
+                            f"[evidence: {', '.join(statement.evidence_local_ids)}]"
+                        )
+                        for statement in artifact.statements
+                    ],
+                    "",
+                ]
             )
-            for artifact in compilation.artifacts
-        ]
+        return lines
 
     @staticmethod
     def _review_lines(extraction: IngestExtractionResult) -> list[str]:
@@ -181,6 +235,12 @@ class SourcePageWriter:
     def _yaml_string(value: str) -> str:
         escaped = value.replace('"', '\\"')
         return f'"{escaped}"'
+
+    @staticmethod
+    def _yaml_list(name: str, values: list[str]) -> list[str]:
+        if not values:
+            return [f"{name}: []"]
+        return [f"{name}:", *[f"  - {value}" for value in values]]
 
     @staticmethod
     def _confidence_label(extraction: IngestExtractionResult) -> str:

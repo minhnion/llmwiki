@@ -35,6 +35,10 @@ def claim_id(source_id: str, text: str, index: int) -> str:
     return f"cl_{stable_hash(source_id, text, str(index), length=20)}"
 
 
+def claim_id_from_local(source_id: str, local_id: str) -> str:
+    return f"cl_{stable_hash(source_id, local_id, length=20)}"
+
+
 def entity_id(name: str, entity_type: str) -> str:
     return f"ent_{stable_hash(name.lower().strip(), entity_type.lower().strip(), length=20)}"
 
@@ -45,6 +49,14 @@ def review_item_id(source_id: str, title: str, body: str, index: int) -> str:
 
 def wiki_page_id(source_id: str) -> str:
     return f"page_{stable_hash(source_id, 'source', length=20)}"
+
+
+def knowledge_page_id(source_id: str, local_id: str) -> str:
+    return f"page_{stable_hash(source_id, local_id, 'knowledge', length=20)}"
+
+
+def statement_id(source_id: str, artifact_local_id: str, statement_local_id: str) -> str:
+    return f"stmt_{stable_hash(source_id, artifact_local_id, statement_local_id, length=20)}"
 
 
 def query_run_id() -> str:

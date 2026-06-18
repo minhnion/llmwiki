@@ -6,6 +6,7 @@ from backend.app.core.ids import (
     artifact_version_id,
     coverage_report_id,
     evidence_id_from_local,
+    statement_id,
 )
 from backend.app.core.text import stable_hash
 from backend.app.domain.compiler import (
@@ -14,6 +15,8 @@ from backend.app.domain.compiler import (
     CompilationPassPlan,
     CompilationPassResult,
     CompiledArtifact,
+    CompiledRelation,
+    CompiledSemanticNode,
     CompilerPassStatus,
     CoverageReport,
     SourceManifest,
@@ -71,6 +74,15 @@ class SQLiteCompilerRepository(SQLiteRepository):
                 """,
                 (run["id"], source_id),
             ).fetchall()
+            semantic_node_rows = connection.execute(
+                """
+                SELECT node_json
+                FROM compiled_semantic_nodes
+                WHERE compiler_run_id = ? AND source_id = ?
+                ORDER BY local_id
+                """,
+                (run["id"], source_id),
+            ).fetchall()
 
         return CompilationInspection(
             compiler_run_id=run["id"],
@@ -106,6 +118,10 @@ class SQLiteCompilerRepository(SQLiteRepository):
             artifacts=[
                 CompiledArtifact.model_validate(json.loads(row["artifact_json"]))
                 for row in artifact_rows
+            ],
+            semantic_nodes=[
+                CompiledSemanticNode.model_validate(json.loads(row["node_json"]))
+                for row in semantic_node_rows
             ],
         )
 
@@ -330,6 +346,18 @@ class SQLiteCompilerRepository(SQLiteRepository):
             old_artifact_ids = [row["id"] for row in old_artifact_rows]
             if old_artifact_ids:
                 placeholders = ",".join("?" for _ in old_artifact_ids)
+                old_statement_rows = connection.execute(
+                    f"""
+                    SELECT id FROM artifact_statements
+                    WHERE artifact_id IN ({placeholders})
+                    """,
+                    tuple(old_artifact_ids),
+                ).fetchall()
+                for row in old_statement_rows:
+                    connection.execute(
+                        "DELETE FROM artifact_statements_fts WHERE id = ?",
+                        (row["id"],),
+                    )
                 old_relation_rows = connection.execute(
                     f"""
                     SELECT id FROM artifact_relations
@@ -345,6 +373,10 @@ class SQLiteCompilerRepository(SQLiteRepository):
             for row in old_artifact_rows:
                 connection.execute("DELETE FROM artifacts_fts WHERE id = ?", (row["id"],))
             connection.execute("DELETE FROM artifacts WHERE source_id = ?", (source.id,))
+            connection.execute(
+                "DELETE FROM compiled_semantic_nodes WHERE source_id = ?",
+                (source.id,),
+            )
 
             for artifact in bundle.artifacts:
                 current_id = artifact_ids[artifact.local_id]
@@ -424,8 +456,131 @@ class SQLiteCompilerRepository(SQLiteRepository):
                             artifact.confidence,
                         ),
                     )
+                for unit_local_id in artifact.source_unit_ids:
+                    connection.execute(
+                        """
+                        INSERT INTO artifact_source_units (
+                            artifact_id, compiler_run_id, source_id, unit_local_id
+                        )
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (current_id, run_id, source.id, unit_local_id),
+                    )
+                for statement in artifact.statements:
+                    current_statement_id = statement_id(
+                        source.id,
+                        artifact.local_id,
+                        statement.local_id,
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO artifact_statements (
+                            id, artifact_id, source_id, compiler_run_id, local_id,
+                            statement_type, statement_text, subject, predicate,
+                            object_value, object_type, source_unit_ids_json,
+                            qualifiers_json, confidence, status, created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            current_statement_id,
+                            current_id,
+                            source.id,
+                            run_id,
+                            statement.local_id,
+                            statement.statement_type,
+                            statement.text,
+                            statement.subject,
+                            statement.predicate,
+                            statement.object,
+                            statement.object_type,
+                            _json(statement.source_unit_ids),
+                            _json(
+                                [item.model_dump() for item in statement.qualifiers]
+                            ),
+                            statement.confidence,
+                            statement.status,
+                            timestamp,
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO artifact_statements_fts (
+                            id, artifact_id, source_id, statement_type,
+                            statement_text, subject, predicate, object_value
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            current_statement_id,
+                            current_id,
+                            source.id,
+                            statement.statement_type,
+                            statement.text,
+                            statement.subject,
+                            statement.predicate,
+                            statement.object,
+                        ),
+                    )
+                    for local_evidence_id in statement.evidence_local_ids:
+                        connection.execute(
+                            """
+                            INSERT INTO artifact_statement_evidence (
+                                statement_id, evidence_id
+                            )
+                            VALUES (?, ?)
+                            """,
+                            (
+                                current_statement_id,
+                                evidence_ids[local_evidence_id],
+                            ),
+                        )
 
-            for relation in bundle.relations:
+            for node in bundle.semantic_nodes:
+                connection.execute(
+                    """
+                    INSERT INTO compiled_semantic_nodes (
+                        id, source_id, compiler_run_id, local_id, node_json, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"snode_{stable_hash(source.id, node.local_id, length=20)}",
+                        source.id,
+                        run_id,
+                        node.local_id,
+                        _json(node.model_dump()),
+                        timestamp,
+                    ),
+                )
+
+            relations = list(bundle.relations)
+            relation_keys = {
+                (
+                    relation.source_artifact_local_id,
+                    relation.target_artifact_local_id,
+                )
+                for relation in relations
+                if relation.target_artifact_local_id
+            }
+            for artifact in bundle.artifacts:
+                for related_local_id in artifact.related_artifact_local_ids:
+                    if (artifact.local_id, related_local_id) in relation_keys:
+                        continue
+                    relations.append(
+                        CompiledRelation(
+                            source_artifact_local_id=artifact.local_id,
+                            target_artifact_local_id=related_local_id,
+                            target_literal="",
+                            relation_type="related_to",
+                            evidence_local_ids=artifact.evidence_local_ids,
+                            qualifiers=[],
+                            confidence=artifact.confidence,
+                            status=artifact.status,
+                        )
+                    )
+
+            for relation in relations:
                 source_artifact_id = artifact_ids[relation.source_artifact_local_id]
                 target_artifact_id = artifact_ids.get(relation.target_artifact_local_id)
                 target_value = target_artifact_id or relation.target_literal

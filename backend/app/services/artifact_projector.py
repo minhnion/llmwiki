@@ -24,6 +24,8 @@ class ArtifactProjector:
         }
         claims = [
             ExtractedClaim(
+                local_id=f"{artifact.local_id}:{statement.local_id}",
+                statement_type=statement.statement_type,
                 text=statement.text,
                 subject=statement.subject,
                 predicate=statement.predicate,
@@ -33,6 +35,12 @@ class ArtifactProjector:
                     for local_id in statement.evidence_local_ids
                 ],
                 evidence_local_ids=statement.evidence_local_ids,
+                source_unit_ids=statement.source_unit_ids,
+                object_type=statement.object_type,
+                qualifiers=[
+                    {"key": item.key, "value": item.value}
+                    for item in statement.qualifiers
+                ],
                 confidence=statement.confidence,
                 status=statement.status,
             )
@@ -41,18 +49,19 @@ class ArtifactProjector:
         ]
         entities = [
             ExtractedEntity(
-                name=artifact.title,
-                entity_type=artifact.artifact_type,
-                aliases=artifact.aliases,
-                description=artifact.summary,
+                name=node.name,
+                entity_type=node.node_type,
+                aliases=node.aliases,
+                description=node.description,
                 evidence_locators=[
                     locator_by_evidence[local_id]
-                    for local_id in artifact.evidence_local_ids
+                    for local_id in node.evidence_local_ids
                 ],
-                evidence_local_ids=artifact.evidence_local_ids,
-                confidence=artifact.confidence,
+                evidence_local_ids=node.evidence_local_ids,
+                source_unit_ids=node.source_unit_ids,
+                confidence=node.confidence,
             )
-            for artifact in bundle.artifacts
+            for node in bundle.semantic_nodes
         ]
         return IngestExtractionResult(
             source_title=source.title,
@@ -70,6 +79,7 @@ class ArtifactProjector:
             evidence_items=[
                 ExtractedEvidence(
                     local_id=evidence.local_id,
+                    source_unit_ids=evidence.source_unit_ids,
                     locator=_render_locator(
                         evidence.locator.kind,
                         evidence.locator.value,

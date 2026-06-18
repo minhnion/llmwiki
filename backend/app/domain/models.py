@@ -54,6 +54,8 @@ class WikiPage:
     body: str
     summary: str = ""
     source_ids: tuple[str, ...] = field(default_factory=tuple)
+    artifact_ids: tuple[str, ...] = field(default_factory=tuple)
+    related_page_ids: tuple[str, ...] = field(default_factory=tuple)
     claim_ids: tuple[str, ...] = field(default_factory=tuple)
     sha256: str | None = None
     created_at: str | None = None

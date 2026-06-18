@@ -4,6 +4,7 @@ from pathlib import Path
 from backend.app.core.clock import utc_now_iso
 from backend.app.core.ids import (
     claim_id,
+    claim_id_from_local,
     entity_id,
     evidence_id,
     evidence_id_from_local,
@@ -15,7 +16,13 @@ from backend.app.repositories.base import SQLiteRepository
 
 
 class SQLiteExtractionRepository(SQLiteRepository):
-    def save(self, source: SourceRef, extraction: IngestExtractionResult, page: WikiPage) -> None:
+    def save(
+        self,
+        source: SourceRef,
+        extraction: IngestExtractionResult,
+        page: WikiPage,
+        compiler_run_id: str | None = None,
+    ) -> None:
         now = utc_now_iso()
         evidence_by_local_id: dict[str, str] = {}
         evidence_ids_by_locator: dict[str, list[str]] = {}
@@ -55,6 +62,22 @@ class SQLiteExtractionRepository(SQLiteRepository):
                         now,
                     ),
                 )
+                if compiler_run_id:
+                    for unit_local_id in evidence.source_unit_ids:
+                        connection.execute(
+                            """
+                            INSERT INTO evidence_source_units (
+                                evidence_id, compiler_run_id, source_id, unit_local_id
+                            )
+                            VALUES (?, ?, ?, ?)
+                            """,
+                            (
+                                current_evidence_id,
+                                compiler_run_id,
+                                source.id,
+                                unit_local_id,
+                            ),
+                        )
                 connection.execute(
                     """
                     INSERT INTO evidence_items_fts (id, source_id, locator, text, summary)
@@ -70,7 +93,11 @@ class SQLiteExtractionRepository(SQLiteRepository):
                 )
 
             for index, claim in enumerate(extraction.claims):
-                current_claim_id = claim_id(source.id, claim.text, index)
+                current_claim_id = (
+                    claim_id_from_local(source.id, claim.local_id)
+                    if claim.local_id
+                    else claim_id(source.id, claim.text, index)
+                )
                 claim_ids.append(current_claim_id)
                 connection.execute(
                     """
@@ -159,6 +186,37 @@ class SQLiteExtractionRepository(SQLiteRepository):
                         now,
                     ),
                 )
+                support_ids = [
+                    evidence_by_local_id[local_id]
+                    for local_id in entity.evidence_local_ids
+                    if local_id in evidence_by_local_id
+                ]
+                for current_evidence_id in support_ids:
+                    connection.execute(
+                        """
+                        INSERT OR IGNORE INTO entity_evidence (
+                            source_id, entity_id, evidence_id
+                        )
+                        VALUES (?, ?, ?)
+                        """,
+                        (source.id, current_entity_id, current_evidence_id),
+                    )
+                if compiler_run_id:
+                    for unit_local_id in entity.source_unit_ids:
+                        connection.execute(
+                            """
+                            INSERT OR IGNORE INTO semantic_node_source_units (
+                                source_id, entity_id, compiler_run_id, unit_local_id
+                            )
+                            VALUES (?, ?, ?, ?)
+                            """,
+                            (
+                                source.id,
+                                current_entity_id,
+                                compiler_run_id,
+                                unit_local_id,
+                            ),
+                        )
                 connection.execute(
                     "DELETE FROM entities_fts WHERE id = ?",
                     (current_entity_id,),

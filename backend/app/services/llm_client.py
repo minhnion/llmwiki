@@ -13,11 +13,13 @@ from backend.app.domain.compiler import (
     COMPILATION_PASS_JSON_SCHEMA,
     COVERAGE_REPORT_JSON_SCHEMA,
     SOURCE_MANIFEST_JSON_SCHEMA,
+    WIKI_INTEGRATION_PLAN_JSON_SCHEMA,
     CompilationBundle,
     CompilationPassPlan,
     CompilationPassResult,
     CoverageReport,
     SourceManifest,
+    WikiIntegrationPlan,
 )
 from backend.app.domain.extraction import (
     INGEST_EXTRACTION_JSON_SCHEMA,
@@ -176,7 +178,7 @@ class OpenAIResponsesClient:
                             "source_id": source.id,
                             "audit_iteration": iteration,
                             "manifest": manifest.model_dump(),
-                            "compiled_knowledge": _compact_compilation(compilation),
+                            "compiled_knowledge": _audit_compilation_payload(compilation),
                         },
                         ensure_ascii=False,
                     ),
@@ -184,6 +186,40 @@ class OpenAIResponsesClient:
             ],
         )
         return CoverageReport.model_validate(payload)
+
+    async def plan_wiki_integration(
+        self,
+        source: SourceRef,
+        manifest: SourceManifest,
+        compilation: CompilationBundle,
+    ) -> WikiIntegrationPlan:
+        payload = await self._create_structured_response(
+            name="llm_wiki_integration_plan_v3",
+            schema=WIKI_INTEGRATION_PLAN_JSON_SCHEMA,
+            instructions=_wiki_integration_instructions(self.preferred_language),
+            inputs=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": json.dumps(
+                                {
+                                    "source_id": source.id,
+                                    "source_title": source.title,
+                                    "manifest": manifest.model_dump(),
+                                    "compiled_knowledge": _audit_compilation_payload(
+                                        compilation
+                                    ),
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    ],
+                }
+            ],
+        )
+        return WikiIntegrationPlan.model_validate(payload)
 
     async def plan_query(self, command: QueryAskCommand) -> QueryPlan:
         payload = await self._create_structured_response(
@@ -398,6 +434,8 @@ def _source_profile_instructions(preferred_language: str) -> str:
         "acceptance criteria và stage khác nhau phải còn khả năng được kiểm tra riêng. Mỗi pass "
         "phải "
         "có mục tiêu khác biệt và target_unit_ids chỉ được tham chiếu unit đã khai báo. "
+        "Hợp của target_unit_ids từ toàn bộ compilation_plan bắt buộc bao phủ mọi content "
+        "unit; không được để unit chỉ xuất hiện trong manifest mà không có pass xử lý. "
         "Không trích xuất artifacts ở bước profiling. Giữ ngôn ngữ nguồn; nếu không xác định "
         f"được thì dùng `{preferred_language}`. Chỉ trả JSON đúng schema."
     )
@@ -418,14 +456,23 @@ def _compilation_pass_instructions(preferred_language: str) -> str:
         "manifest và compiled knowledge hiện có. Không dùng fixed chunks hoặc taxonomy domain. "
         "Evidence phải bám sát nguồn, có local_id source-scoped duy nhất và locator kiểm tra "
         "được. Artifact type và relation type là open strings do nội dung quyết định. "
-        "Mỗi source-backed artifact phải có evidence_local_ids. Mỗi factual statement phải "
-        "nguyên tử, có subject/predicate/object và evidence_local_ids để projection sang graph. "
+        "Mỗi evidence phải chỉ rõ source_unit_ids mà nó trực tiếp hỗ trợ. Mỗi source-backed "
+        "artifact phải có evidence_local_ids và source_unit_ids. Mỗi artifact phải có các "
+        "atomic statements đủ để biểu diễn mọi dữ kiện, công thức, bước, quyền, nghĩa vụ, "
+        "điều kiện và ngoại lệ có trong content; không được giấu nhiều factual claims chỉ trong "
+        "prose content. Mỗi statement có local_id duy nhất trong artifact, statement_type mở, "
+        "subject/predicate/object, object_type, qualifiers, evidence_local_ids và source_unit_ids. "
+        "Tạo semantic_nodes riêng cho thực thể/khái niệm thực sự xuất hiện trong nguồn như tổ "
+        "chức, vai trò, sản phẩm, sự kiện hoặc khái niệm; tuyệt đối không biến tiêu đề artifact "
+        "thành semantic node chỉ vì artifact tồn tại. "
         "Với mỗi target unit, phải biên dịch các cơ chế, điều kiện, ngoại lệ, failure mode, "
         "mitigation và acceptance criterion có ý nghĩa; không được thay cả unit bằng một câu "
         "tóm tắt chung chung. Toàn bộ nội dung tự nhiên, gồm title, summary, content, statement, "
         "relation và review item, phải cùng ngôn ngữ với manifest.language; chỉ giữ nguyên tên "
         "riêng và thuật ngữ kỹ thuật cần thiết. "
-        "Không dùng locator text làm ID. Không lặp artifact/evidence đã có; nếu pass bổ sung "
+        "review_status của artifact luôn phải là `unreviewed`; model không có quyền xác nhận "
+        "human review. Không dùng locator text làm ID. Không lặp artifact/evidence đã có; nếu "
+        "pass bổ sung "
         "một artifact hiện có, dùng lại local_id đó với bản đầy đủ hơn. Relations chỉ được "
         "tham chiếu artifact local IDs tồn tại trong output hiện tại hoặc compiled knowledge "
         "đã cung cấp và phải có evidence. Giữ ngôn ngữ nguồn; nếu không xác định được thì dùng "
@@ -441,6 +488,9 @@ def _coverage_audit_instructions(preferred_language: str) -> str:
         "Bắt buộc tạo đúng một unit_assessment cho từng content unit trong manifest. Với từng "
         "unit, đối chiếu trực tiếp raw source, liệt kê tri thức đã được biểu diễn và tri thức "
         "còn thiếu; không suy ra complete chỉ từ covered_unit_ids do compiler tự khai báo. "
+        "Một unit chỉ complete khi có evidence, artifact và atomic statements trực tiếp mang "
+        "source_unit_id tương ứng. represented_knowledge phải nêu nội dung thực sự nhìn thấy "
+        "trong compiled knowledge, không được chép lại summary của manifest rồi coi là covered. "
         "Kiểm tra provenance thiếu/sai, nội dung bị khái quát quá mức, bảng/hình/ngoại lệ bị "
         "bỏ sót, failure modes/mitigation/criteria bị mất và compilation loss. Chỉ trả complete "
         "khi mọi unit có status complete, missing_knowledge rỗng, không còn gap quan trọng và "
@@ -451,11 +501,25 @@ def _coverage_audit_instructions(preferred_language: str) -> str:
     )
 
 
+def _wiki_integration_instructions(preferred_language: str) -> str:
+    return (
+        "Bạn là Wiki Integrator cho một LLM Wiki tổng quát. Lập kế hoạch các trang Markdown "
+        "dễ đọc từ compiled artifacts đã được kiểm chứng. Không tạo một trang cho mọi atomic "
+        "statement. Hãy nhóm các artifact có cùng semantic identity hoặc cùng chủ đề tự nhiên, "
+        "nhưng không trộn các scope khác nhau gây mất nghĩa. Mọi artifact bắt buộc xuất hiện "
+        "trong ít nhất một page. page_type là open string theo nội dung, local_id ổn định và "
+        "related_page_local_ids chỉ tham chiếu page trong chính plan. review_status luôn là "
+        "`unreviewed`. Không bịa tri thức mới; page chỉ là view của artifacts. Giữ ngôn ngữ "
+        f"nguồn, mặc định `{preferred_language}`. Chỉ trả JSON đúng schema."
+    )
+
+
 def _compact_compilation(bundle: CompilationBundle) -> dict[str, object]:
     return {
         "evidence": [
             {
                 "local_id": item.local_id,
+                "source_unit_ids": item.source_unit_ids,
                 "locator": item.locator.model_dump(),
                 "summary": compact_text(item.summary, 280),
                 "content": compact_text(item.content, 700),
@@ -470,13 +534,27 @@ def _compact_compilation(bundle: CompilationBundle) -> dict[str, object]:
                 "summary": compact_text(item.summary, 400),
                 "content": compact_text(item.content, 1000),
                 "evidence_local_ids": item.evidence_local_ids,
+                "source_unit_ids": item.source_unit_ids,
                 "statements": [statement.model_dump() for statement in item.statements],
             }
             for item in bundle.artifacts
         ],
+        "semantic_nodes": [item.model_dump() for item in bundle.semantic_nodes],
         "relations": [item.model_dump() for item in bundle.relations],
         "covered_unit_ids": bundle.covered_unit_ids,
         "review_items": [item.model_dump() for item in bundle.review_items],
+    }
+
+
+def _audit_compilation_payload(bundle: CompilationBundle) -> dict[str, object]:
+    return {
+        "evidence": [item.model_dump() for item in bundle.evidence_items],
+        "artifacts": [item.model_dump() for item in bundle.artifacts],
+        "semantic_nodes": [item.model_dump() for item in bundle.semantic_nodes],
+        "relations": [item.model_dump() for item in bundle.relations],
+        "covered_unit_ids": bundle.covered_unit_ids,
+        "review_items": [item.model_dump() for item in bundle.review_items],
+        "notes": bundle.notes,
     }
 
 
@@ -535,6 +613,8 @@ def _evidence_ranking_instructions(max_evidence: int, preferred_language: str) -
         "Bạn là bộ đánh giá bằng chứng của LLM Wiki bám sát nguồn. "
         f"Chọn tối đa {max_evidence} evidence_id trực tiếp hoặc hỗ trợ mạnh cho câu hỏi. "
         "Loại bằng chứng yếu, trùng hoặc lạc đề. Nêu rõ mâu thuẫn và phần bằng chứng còn thiếu. "
+        "Nếu không có evidence trực tiếp hoặc hỗ trợ đủ mạnh, selected_evidence_ids phải rỗng; "
+        "không chọn candidate chỉ để luôn có kết quả. "
         f"Viết reason/summary theo ngôn ngữ câu hỏi, mặc định `{preferred_language}`. "
         "Không bịa evidence_id. Chỉ trả về JSON đúng schema."
     )
@@ -548,7 +628,8 @@ def _query_synthesis_instructions(preferred_language: str) -> str:
         "là insufficient hoặc low. BẮT BUỘC trả lời cùng ngôn ngữ với câu hỏi của người dùng; "
         f"nếu không xác định được thì dùng `{preferred_language}`. Không tự chuyển câu hỏi "
         "tiếng Việt sang câu trả lời tiếng Anh. Tách riêng mâu thuẫn và câu hỏi mở, không che "
-        "giấu bất định. Chỉ trả về JSON đúng schema."
+        "giấu bất định. Không tạo citation cho bằng chứng không trực tiếp hỗ trợ câu trả lời; "
+        "nếu không có citation hợp lệ thì trả citations rỗng. Chỉ trả về JSON đúng schema."
     )
 
 

@@ -6,6 +6,7 @@ from backend.app.domain.compiler import (
     CompilationPassResult,
     CoverageReport,
     SourceManifest,
+    WikiIntegrationPlan,
 )
 from backend.app.domain.models import SourceRef
 
@@ -31,3 +32,11 @@ class CompilerLLMClient(Protocol):
         iteration: int,
     ) -> CoverageReport:
         """Compare compiled knowledge with the source and identify material gaps."""
+
+    async def plan_wiki_integration(
+        self,
+        source: SourceRef,
+        manifest: SourceManifest,
+        compilation: CompilationBundle,
+    ) -> WikiIntegrationPlan:
+        """Plan human-readable wiki pages over the compiled artifact IR."""

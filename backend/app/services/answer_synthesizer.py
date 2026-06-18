@@ -1,5 +1,4 @@
 from backend.app.domain.query import (
-    Citation,
     EvidenceCandidate,
     EvidenceRankingResult,
     QueryPlan,
@@ -33,26 +32,17 @@ class AnswerSynthesizer:
             for citation in synthesis.citations
             if citation.evidence_id in evidence_by_id
         ]
-        if not citations and evidence:
-            top = evidence[0]
-            citations = [
-                Citation(
-                    evidence_id=top.evidence_id,
-                    source_id=top.source_id,
-                    source_title=top.source_title,
-                    locator=top.locator,
-                    quote_or_summary=top.summary or top.text,
-                    claim_ids=top.claim_ids,
-                )
-            ]
         selected_claim_ids = {
             claim_id
             for candidate in evidence
             for claim_id in candidate.claim_ids
         }
+        confidence = synthesis.confidence
+        if confidence == "high" and (not citations or ranking_has_material_gap(synthesis)):
+            confidence = "low"
         return QuerySynthesisResult(
             answer=synthesis.answer,
-            confidence=synthesis.confidence,
+            confidence=confidence,
             citations=citations,
             used_claim_ids=[
                 claim_id
@@ -64,3 +54,7 @@ class AnswerSynthesizer:
             open_questions=synthesis.open_questions,
             follow_up_questions=synthesis.follow_up_questions,
         )
+
+
+def ranking_has_material_gap(synthesis: QuerySynthesisResult) -> bool:
+    return bool(synthesis.open_questions) and not synthesis.used_claim_ids

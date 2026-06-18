@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 
 from backend.app.core.clock import utc_now_iso
 from backend.app.core.ids import compiler_pass_run_id, compiler_run_id, ingest_job_id
@@ -7,6 +8,8 @@ from backend.app.domain.compiler import (
     CompilationPassPlan,
     CoverageReport,
     SourceManifest,
+    WikiIntegrationPlan,
+    WikiPagePlan,
 )
 from backend.app.domain.extraction import IngestExtractionResult
 from backend.app.domain.graph import GraphBuildCommand, GraphBuildResult
@@ -15,12 +18,15 @@ from backend.app.repositories.compiler import SQLiteCompilerRepository
 from backend.app.repositories.extractions import SQLiteExtractionRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
+from backend.app.repositories.wiki import SQLiteWikiRepository
 from backend.app.services.artifact_projector import ArtifactProjector
 from backend.app.services.compilation_merger import CompilationMerger
 from backend.app.services.compilation_validator import CompilationValidator
 from backend.app.services.compiler_contracts import CompilerLLMClient
 from backend.app.services.coverage_gate import CoverageGate
 from backend.app.services.graph_builder import GraphBuilder
+from backend.app.services.knowledge_page_writer import KnowledgePageWriter
+from backend.app.services.manifest_planner import ManifestPlanner
 from backend.app.services.source_page_writer import SourcePageWriter
 from backend.app.services.wiki_log import WikiLogWriter
 
@@ -30,6 +36,7 @@ class SourceIngestResult:
     source: SourceRef
     extraction: IngestExtractionResult
     page: WikiPage
+    wiki_pages: list[WikiPage]
     compiler_run_id: str
     manifest: SourceManifest
     compilation: CompilationBundle
@@ -48,6 +55,8 @@ class SourceIngestService:
         llm_client: CompilerLLMClient,
         graph_builder: GraphBuilder,
         source_page_writer: SourcePageWriter,
+        knowledge_page_writer: KnowledgePageWriter,
+        wiki_repository: SQLiteWikiRepository,
         wiki_log_writer: WikiLogWriter,
         max_file_bytes: int,
         model: str,
@@ -61,6 +70,7 @@ class SourceIngestService:
         validator: CompilationValidator | None = None,
         projector: ArtifactProjector | None = None,
         coverage_gate: CoverageGate | None = None,
+        manifest_planner: ManifestPlanner | None = None,
     ) -> None:
         self.source_repository = source_repository
         self.compiler_repository = compiler_repository
@@ -69,6 +79,8 @@ class SourceIngestService:
         self.llm_client = llm_client
         self.graph_builder = graph_builder
         self.source_page_writer = source_page_writer
+        self.knowledge_page_writer = knowledge_page_writer
+        self.wiki_repository = wiki_repository
         self.wiki_log_writer = wiki_log_writer
         self.max_file_bytes = max_file_bytes
         self.model = model
@@ -82,6 +94,7 @@ class SourceIngestService:
         self.validator = validator or CompilationValidator()
         self.projector = projector or ArtifactProjector()
         self.coverage_gate = coverage_gate or CoverageGate()
+        self.manifest_planner = manifest_planner or ManifestPlanner()
 
     async def ingest(self, source_id: str) -> SourceIngestResult:
         source = self.source_repository.get(source_id)
@@ -107,7 +120,10 @@ class SourceIngestService:
             started_at=started_at,
         )
         try:
-            manifest = await self.llm_client.profile_source(source)
+            manifest = self.manifest_planner.ensure_complete_plan(
+                await self.llm_client.profile_source(source),
+                max_passes=self.max_passes,
+            )
             self.compiler_repository.save_manifest(
                 run_id,
                 source.id,
@@ -145,6 +161,7 @@ class SourceIngestService:
                 executed_passes,
             )
             self.validator.validate(manifest, compilation)
+            wiki_plan = await self._plan_wiki(source, manifest, compilation)
 
             self.compiler_repository.update_stage(
                 run_id,
@@ -152,19 +169,41 @@ class SourceIngestService:
                 "integrating",
                 utc_now_iso(),
             )
+            previous_wiki_paths = self.wiki_repository.list_source_page_paths(source.id)
             extraction = self.projector.project(source, manifest, compilation)
             page = self.source_page_writer.write(
                 source,
                 extraction,
                 compilation=compilation,
+                coverage_status=coverage.coverage_status,
+                compiler_version=self.compiler_version,
             )
-            self.extraction_repository.save(source, extraction, page)
+            self.extraction_repository.save(
+                source,
+                extraction,
+                page,
+                compiler_run_id=run_id,
+            )
             self.compiler_repository.save_artifacts(
                 run_id,
                 source,
                 compilation,
                 utc_now_iso(),
             )
+            knowledge_pages = self.knowledge_page_writer.write(
+                source=source,
+                manifest=manifest,
+                compilation=compilation,
+                plan=wiki_plan,
+                coverage_status=coverage.coverage_status,
+                compiler_version=self.compiler_version,
+            )
+            all_wiki_pages = [page, *knowledge_pages]
+            self.wiki_repository.save_pages(source.id, all_wiki_pages)
+            current_paths = {str(item.path) for item in all_wiki_pages}
+            for stale_path in previous_wiki_paths:
+                if stale_path not in current_paths:
+                    Path(stale_path).unlink(missing_ok=True)
             self.compiler_repository.update_stage(
                 run_id,
                 source.id,
@@ -206,6 +245,7 @@ class SourceIngestService:
                 source=updated_source,
                 extraction=extraction,
                 page=page,
+                wiki_pages=all_wiki_pages,
                 compiler_run_id=run_id,
                 manifest=manifest,
                 compilation=compilation,
@@ -254,7 +294,7 @@ class SourceIngestService:
                     compilation,
                 )
                 merged = self.merger.merge(compilation, result)
-                self.validator.validate(manifest, merged)
+                self.validator.validate_pass(manifest, current_plan, result, merged)
                 self.compiler_repository.finish_pass(
                     pass_run_id,
                     result,
@@ -301,7 +341,12 @@ class SourceIngestService:
             compilation,
             iteration=0,
         )
-        self.coverage_gate.validate_report(manifest, report)
+        report = self.coverage_gate.reconcile(
+            manifest,
+            compilation,
+            report,
+            iteration=0,
+        )
         self.compiler_repository.save_coverage(
             run_id,
             source.id,
@@ -330,7 +375,12 @@ class SourceIngestService:
                 compilation,
                 iteration=iteration,
             )
-            self.coverage_gate.validate_report(manifest, report)
+            report = self.coverage_gate.reconcile(
+                manifest,
+                compilation,
+                report,
+                iteration=iteration,
+            )
             self.compiler_repository.save_coverage(
                 run_id,
                 source.id,
@@ -339,3 +389,46 @@ class SourceIngestService:
                 utc_now_iso(),
             )
         return compilation, report, executed_passes
+
+    async def _plan_wiki(
+        self,
+        source: SourceRef,
+        manifest: SourceManifest,
+        compilation: CompilationBundle,
+    ) -> WikiIntegrationPlan:
+        last_error: Exception | None = None
+        for _ in range(self.max_pass_retries + 1):
+            try:
+                plan = await self.llm_client.plan_wiki_integration(
+                    source,
+                    manifest,
+                    compilation,
+                )
+                self.validator.validate_wiki_plan(compilation, plan)
+                return plan
+            except Exception as exc:
+                last_error = exc
+        if not compilation.artifacts:
+            raise ValueError("Cannot plan wiki integration without artifacts.") from last_error
+        return WikiIntegrationPlan(
+            pages=[
+                WikiPagePlan(
+                    local_id="compiled_knowledge",
+                    title=f"Tri thức biên dịch từ {source.title}",
+                    page_type="compiled_knowledge",
+                    summary=manifest.document_profile.summary,
+                    artifact_local_ids=[
+                        artifact.local_id for artifact in compilation.artifacts
+                    ],
+                    related_page_local_ids=[],
+                    confidence=min(
+                        artifact.confidence for artifact in compilation.artifacts
+                    ),
+                    review_status="unreviewed",
+                )
+            ],
+            notes=[
+                "Fallback deterministic page plan used after invalid LLM wiki plans.",
+                str(last_error) if last_error else "",
+            ],
+        )

@@ -520,6 +520,142 @@ MIGRATIONS: tuple[Migration, ...] = (
         ON coverage_reports(source_id, created_at);
         """,
     ),
+    Migration(
+        version=6,
+        name="knowledge_compiler_v3_quality",
+        sql="""
+        CREATE TABLE IF NOT EXISTS evidence_source_units (
+            evidence_id TEXT NOT NULL,
+            compiler_run_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            unit_local_id TEXT NOT NULL,
+            PRIMARY KEY (evidence_id, compiler_run_id, unit_local_id),
+            FOREIGN KEY (evidence_id) REFERENCES evidence_items(id) ON DELETE CASCADE,
+            FOREIGN KEY (compiler_run_id) REFERENCES compiler_runs(id) ON DELETE CASCADE,
+            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS artifact_source_units (
+            artifact_id TEXT NOT NULL,
+            compiler_run_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            unit_local_id TEXT NOT NULL,
+            PRIMARY KEY (artifact_id, compiler_run_id, unit_local_id),
+            FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE,
+            FOREIGN KEY (compiler_run_id) REFERENCES compiler_runs(id) ON DELETE CASCADE,
+            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS artifact_statements (
+            id TEXT PRIMARY KEY,
+            artifact_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            compiler_run_id TEXT NOT NULL,
+            local_id TEXT NOT NULL,
+            statement_type TEXT NOT NULL,
+            statement_text TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            predicate TEXT NOT NULL,
+            object_value TEXT NOT NULL,
+            object_type TEXT NOT NULL,
+            source_unit_ids_json TEXT NOT NULL DEFAULT '[]',
+            qualifiers_json TEXT NOT NULL DEFAULT '[]',
+            confidence REAL NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(artifact_id, local_id),
+            FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE,
+            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE,
+            FOREIGN KEY (compiler_run_id) REFERENCES compiler_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS compiled_semantic_nodes (
+            id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            compiler_run_id TEXT NOT NULL,
+            local_id TEXT NOT NULL,
+            node_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(source_id, local_id),
+            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE,
+            FOREIGN KEY (compiler_run_id) REFERENCES compiler_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS artifact_statement_evidence (
+            statement_id TEXT NOT NULL,
+            evidence_id TEXT NOT NULL,
+            PRIMARY KEY (statement_id, evidence_id),
+            FOREIGN KEY (statement_id) REFERENCES artifact_statements(id) ON DELETE CASCADE,
+            FOREIGN KEY (evidence_id) REFERENCES evidence_items(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS entity_evidence (
+            source_id TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            evidence_id TEXT NOT NULL,
+            PRIMARY KEY (source_id, entity_id, evidence_id),
+            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE,
+            FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE,
+            FOREIGN KEY (evidence_id) REFERENCES evidence_items(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS semantic_node_source_units (
+            source_id TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            compiler_run_id TEXT NOT NULL,
+            unit_local_id TEXT NOT NULL,
+            PRIMARY KEY (source_id, entity_id, compiler_run_id, unit_local_id),
+            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE,
+            FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE,
+            FOREIGN KEY (compiler_run_id) REFERENCES compiler_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS wiki_page_artifacts (
+            page_id TEXT NOT NULL,
+            artifact_id TEXT NOT NULL,
+            PRIMARY KEY (page_id, artifact_id),
+            FOREIGN KEY (page_id) REFERENCES wiki_pages(id) ON DELETE CASCADE,
+            FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS wiki_links (
+            from_page_id TEXT NOT NULL,
+            to_page_id TEXT NOT NULL,
+            link_type TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (from_page_id, to_page_id, link_type),
+            FOREIGN KEY (from_page_id) REFERENCES wiki_pages(id) ON DELETE CASCADE,
+            FOREIGN KEY (to_page_id) REFERENCES wiki_pages(id) ON DELETE CASCADE
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS artifact_statements_fts
+        USING fts5(
+            id UNINDEXED,
+            artifact_id UNINDEXED,
+            source_id UNINDEXED,
+            statement_type,
+            statement_text,
+            subject,
+            predicate,
+            object_value
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_evidence_source_units_unit
+        ON evidence_source_units(source_id, unit_local_id);
+        CREATE INDEX IF NOT EXISTS idx_artifact_source_units_unit
+        ON artifact_source_units(source_id, unit_local_id);
+        CREATE INDEX IF NOT EXISTS idx_artifact_statements_artifact
+        ON artifact_statements(artifact_id);
+        CREATE INDEX IF NOT EXISTS idx_artifact_statements_source
+        ON artifact_statements(source_id);
+        CREATE INDEX IF NOT EXISTS idx_compiled_semantic_nodes_source
+        ON compiled_semantic_nodes(source_id);
+        CREATE INDEX IF NOT EXISTS idx_entity_evidence_evidence
+        ON entity_evidence(evidence_id);
+        CREATE INDEX IF NOT EXISTS idx_wiki_page_artifacts_artifact
+        ON wiki_page_artifacts(artifact_id);
+        """,
+    ),
 )
 
 

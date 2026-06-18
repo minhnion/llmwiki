@@ -18,37 +18,6 @@ class ClaimHit:
     text: str
 
 
-STOP_WORDS = {
-    "a",
-    "an",
-    "and",
-    "are",
-    "as",
-    "at",
-    "be",
-    "by",
-    "for",
-    "from",
-    "how",
-    "in",
-    "is",
-    "it",
-    "of",
-    "on",
-    "or",
-    "that",
-    "the",
-    "to",
-    "what",
-    "when",
-    "where",
-    "which",
-    "who",
-    "why",
-    "with",
-}
-
-
 class SQLiteQueryRepository(SQLiteRepository):
     def search_evidence(
         self,
@@ -67,6 +36,8 @@ class SQLiteQueryRepository(SQLiteRepository):
 
         with self.database.connect() as connection:
             channel_specs = (
+                ("artifact_statement", 4.6, self._search_statement_evidence_ids),
+                ("artifact", 4.3, self._search_artifact_evidence_ids),
                 ("evidence", 4.0, self._search_evidence_ids),
                 ("claim", 3.0, self._search_claim_evidence_ids),
                 ("graph", 2.6, self._search_graph_evidence_ids),
@@ -174,6 +145,56 @@ class SQLiteQueryRepository(SQLiteRepository):
         ).fetchall()
         return [row["evidence_id"] for row in rows]
 
+    def _search_artifact_evidence_ids(
+        self,
+        connection,
+        fts_query: str,
+        source_ids: list[str],
+        tags: list[str],
+        limit: int,
+    ) -> list[str]:
+        filter_sql, params = _source_filter_sql("s", source_ids, tags)
+        rows = connection.execute(
+            f"""
+            SELECT ae.evidence_id
+            FROM artifacts_fts
+            JOIN artifacts a ON a.id = artifacts_fts.id
+            JOIN artifact_evidence ae ON ae.artifact_id = a.id
+            JOIN sources s ON s.id = a.source_id
+            WHERE artifacts_fts MATCH ?
+            {filter_sql}
+            ORDER BY bm25(artifacts_fts), a.confidence DESC
+            LIMIT ?
+            """,
+            (fts_query, *params, limit),
+        ).fetchall()
+        return [row["evidence_id"] for row in rows]
+
+    def _search_statement_evidence_ids(
+        self,
+        connection,
+        fts_query: str,
+        source_ids: list[str],
+        tags: list[str],
+        limit: int,
+    ) -> list[str]:
+        filter_sql, params = _source_filter_sql("s", source_ids, tags)
+        rows = connection.execute(
+            f"""
+            SELECT ase.evidence_id
+            FROM artifact_statements_fts
+            JOIN artifact_statements ast ON ast.id = artifact_statements_fts.id
+            JOIN artifact_statement_evidence ase ON ase.statement_id = ast.id
+            JOIN sources s ON s.id = ast.source_id
+            WHERE artifact_statements_fts MATCH ?
+            {filter_sql}
+            ORDER BY bm25(artifact_statements_fts), ast.confidence DESC
+            LIMIT ?
+            """,
+            (fts_query, *params, limit),
+        ).fetchall()
+        return [row["evidence_id"] for row in rows]
+
     def _search_claim_evidence_ids(
         self,
         connection,
@@ -210,15 +231,16 @@ class SQLiteQueryRepository(SQLiteRepository):
         filter_sql, params = _source_filter_sql("s", source_ids, tags)
         rows = connection.execute(
             f"""
-            SELECT ev.id AS evidence_id
+            SELECT ee.evidence_id
             FROM entities_fts
             JOIN entities ent ON ent.id = entities_fts.id
             JOIN source_entities se ON se.entity_id = ent.id
+            JOIN entity_evidence ee
+                ON ee.source_id = se.source_id AND ee.entity_id = ent.id
             JOIN sources s ON s.id = se.source_id
-            JOIN evidence_items ev ON ev.source_id = s.id
             WHERE entities_fts MATCH ?
             {filter_sql}
-            ORDER BY bm25(entities_fts), ev.confidence DESC
+            ORDER BY bm25(entities_fts), ent.confidence DESC
             LIMIT ?
             """,
             (fts_query, *params, limit),
@@ -260,14 +282,15 @@ class SQLiteQueryRepository(SQLiteRepository):
         filter_sql, params = _source_filter_sql("s", source_ids, tags)
         rows = connection.execute(
             f"""
-            SELECT ev.id AS evidence_id
+            SELECT ae.evidence_id
             FROM wiki_pages_fts
             JOIN wiki_pages page ON page.id = wiki_pages_fts.id
+            JOIN wiki_page_artifacts wpa ON wpa.page_id = page.id
+            JOIN artifact_evidence ae ON ae.artifact_id = wpa.artifact_id
             JOIN sources s ON s.id = page.source_id
-            JOIN evidence_items ev ON ev.source_id = s.id
             WHERE wiki_pages_fts MATCH ?
             {filter_sql}
-            ORDER BY bm25(wiki_pages_fts), ev.confidence DESC
+            ORDER BY bm25(wiki_pages_fts)
             LIMIT ?
             """,
             (fts_query, *params, limit),
@@ -292,7 +315,17 @@ class SQLiteQueryRepository(SQLiteRepository):
                 ev.source_id,
                 src.title AS source_title,
                 src.original_path AS source_path,
-                COALESCE(page.path, '') AS wiki_page_path,
+                COALESCE(
+                    (
+                        SELECT page.path
+                        FROM wiki_pages page
+                        WHERE page.source_id = ev.source_id
+                        ORDER BY CASE WHEN page.page_type = 'source' THEN 0 ELSE 1 END,
+                                 page.updated_at DESC
+                        LIMIT 1
+                    ),
+                    ''
+                ) AS wiki_page_path,
                 ev.locator,
                 ev.modality,
                 ev.text,
@@ -300,7 +333,6 @@ class SQLiteQueryRepository(SQLiteRepository):
                 ev.confidence
             FROM evidence_items ev
             JOIN sources src ON src.id = ev.source_id
-            LEFT JOIN wiki_pages page ON page.source_id = ev.source_id
             WHERE ev.id IN ({placeholders})
             """,
             tuple(evidence_ids),
@@ -393,7 +425,7 @@ def _build_fts_query(question: str, plan: QueryPlan) -> str:
         if 1 < len(cleaned_phrase) <= 80:
             terms.append(cleaned_phrase)
         for token in re.findall(r"[\wÀ-ỹ]+", phrase.lower()):
-            if len(token) >= 2 and token not in STOP_WORDS:
+            if len(token) >= 2:
                 terms.append(token)
 
     unique_terms = list(dict.fromkeys(terms))[:32]

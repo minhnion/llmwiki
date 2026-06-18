@@ -12,6 +12,8 @@ from backend.app.repositories.compiler import SQLiteCompilerRepository
 from backend.app.repositories.extractions import SQLiteExtractionRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
+from backend.app.repositories.wiki import SQLiteWikiRepository
+from backend.app.services.knowledge_page_writer import KnowledgePageWriter
 from backend.app.services.llm_client import OpenAIResponsesClient
 from backend.app.services.source_ingest import SourceIngestResult, SourceIngestService
 from backend.app.services.source_page_writer import SourcePageWriter
@@ -73,6 +75,7 @@ class SourceIngestResponse(BaseModel):
     graph_run_id: str
     relation_count: int
     contradiction_count: int
+    wiki_page_count: int
 
     @classmethod
     def from_domain(cls, result: SourceIngestResult) -> "SourceIngestResponse":
@@ -90,6 +93,7 @@ class SourceIngestResponse(BaseModel):
             graph_run_id=result.graph.graph_run_id,
             relation_count=result.graph.relation_count,
             contradiction_count=result.graph.contradiction_count,
+            wiki_page_count=len(result.wiki_pages),
         )
 
 
@@ -119,6 +123,8 @@ def build_source_ingest(container: AppContainer) -> SourceIngestService:
         ),
         graph_builder=build_graph_builder(container),
         source_page_writer=SourcePageWriter(container.settings.wiki_dir),
+        knowledge_page_writer=KnowledgePageWriter(container.settings.wiki_dir),
+        wiki_repository=SQLiteWikiRepository(container.database),
         wiki_log_writer=WikiLogWriter(container.settings.wiki_dir),
         max_file_bytes=container.settings.max_file_bytes,
         model=container.settings.openai_model,

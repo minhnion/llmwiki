@@ -26,20 +26,20 @@ class Settings(BaseSettings):
     openai_model: str = Field(default="gpt-4o", alias="LLM_WIKI_MODEL")
     preferred_language: str = Field(default="vi", alias="LLM_WIKI_PREFERRED_LANGUAGE")
     max_file_bytes: int = Field(default=50_000_000, alias="LLM_WIKI_MAX_FILE_BYTES")
-    max_output_tokens: int = Field(default=6000, alias="LLM_WIKI_MAX_OUTPUT_TOKENS")
+    max_output_tokens: int = Field(default=16000, alias="LLM_WIKI_MAX_OUTPUT_TOKENS")
     compiler_version: str = Field(
-        default="knowledge-compiler-v2",
+        default="knowledge-compiler-v3-quality",
         alias="LLM_WIKI_COMPILER_VERSION",
     )
     compiler_prompt_version: str = Field(
-        default="compiler-prompts-v2",
+        default="compiler-prompts-v3",
         alias="LLM_WIKI_COMPILER_PROMPT_VERSION",
     )
     compiler_schema_version: str = Field(
-        default="compiler-schema-v2",
+        default="compiler-schema-v3",
         alias="LLM_WIKI_COMPILER_SCHEMA_VERSION",
     )
-    compiler_max_passes: int = Field(default=8, alias="LLM_WIKI_COMPILER_MAX_PASSES")
+    compiler_max_passes: int = Field(default=12, alias="LLM_WIKI_COMPILER_MAX_PASSES")
     compiler_max_pass_retries: int = Field(
         default=2,
         alias="LLM_WIKI_COMPILER_MAX_PASS_RETRIES",

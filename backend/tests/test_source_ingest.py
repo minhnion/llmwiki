@@ -100,6 +100,9 @@ async def _run_ingest_source_test(tmp_path) -> None:
     assert result.graph.status == "completed"
     assert result.graph.relation_count == 3
     assert len(result.compilation.artifacts) == 2
+    assert len(result.wiki_pages) == 3
+    assert all(page.path.exists() for page in result.wiki_pages)
+    assert len(list((wiki_dir / "knowledge").glob("*.md"))) == 2
     assert result.page.path.exists()
     page_body = result.page.path.read_text(encoding="utf-8")
     assert "## Bằng chứng" in page_body
@@ -108,6 +111,9 @@ async def _run_ingest_source_test(tmp_path) -> None:
     index_body = (wiki_dir / "index.md").read_text(encoding="utf-8")
     assert "## Nguồn tài liệu" in index_body
     assert source.id in index_body
+    assert "## Tri thức đã biên dịch" in index_body
+    assert "review_status: unreviewed" in page_body
+    assert "coverage_status: complete" in page_body
 
     with sqlite3.connect(tmp_path / "app.sqlite") as connection:
         counts = {
@@ -128,6 +134,11 @@ async def _run_ingest_source_test(tmp_path) -> None:
                 "artifact_versions",
                 "artifact_evidence",
                 "artifact_relations",
+                "artifact_statements",
+                "evidence_source_units",
+                "artifact_source_units",
+                "wiki_page_artifacts",
+                "wiki_links",
                 "coverage_reports",
                 "relation_edges",
             )
@@ -144,7 +155,7 @@ async def _run_ingest_source_test(tmp_path) -> None:
         "entities": 2,
         "source_entities": 2,
         "review_items": 0,
-        "wiki_pages": 3,
+        "wiki_pages": 5,
         "compiler_runs": 1,
         "compiler_passes": 1,
         "source_manifests": 1,
@@ -152,7 +163,12 @@ async def _run_ingest_source_test(tmp_path) -> None:
         "artifacts": 2,
         "artifact_versions": 2,
         "artifact_evidence": 3,
-        "artifact_relations": 1,
+        "artifact_relations": 2,
+        "artifact_statements": 3,
+        "evidence_source_units": 3,
+        "artifact_source_units": 3,
+        "wiki_page_artifacts": 4,
+        "wiki_links": 2,
         "coverage_reports": 1,
         "relation_edges": 3,
     }

@@ -9,8 +9,12 @@ from backend.app.core.config import Settings
 from backend.app.db.connection import SQLiteDatabase
 from backend.app.db.migrations import MigrationRunner
 from backend.app.domain.compiler import (
+    ArtifactStatement,
     CompilationBundle,
+    CompilationPassPlan,
+    CompilationPassResult,
     CompiledArtifact,
+    CompiledEvidence,
     CoverageGap,
     CoverageReport,
     CoverageUnitAssessment,
@@ -20,11 +24,13 @@ from backend.app.main import create_app
 from backend.app.repositories.compiler import SQLiteCompilerRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
+from backend.app.services.compilation_merger import CompilationMerger
 from backend.app.services.compilation_validator import (
     CompilationValidationError,
     CompilationValidator,
 )
-from backend.app.services.coverage_gate import CoverageGate, CoverageGateError
+from backend.app.services.coverage_gate import CoverageGate
+from backend.app.services.manifest_planner import ManifestPlanner
 from backend.app.services.source_registry import RegisterSourceCommand, SourceRegistryService
 from backend.app.services.wiki_log import WikiLogWriter
 from backend.tests.compiler_fixtures import FakeCompilerClient, build_test_ingest_service
@@ -208,14 +214,16 @@ def test_compilation_validator_rejects_dangling_evidence_reference() -> None:
                 aliases=[],
                 scope=[],
                 evidence_local_ids=["ev_missing"],
+                source_unit_ids=["unit_wiki"],
                 related_artifact_local_ids=[],
                 statements=[],
                 confidence=0.5,
                 status="active",
-                review_status="needs_review",
+                review_status="unreviewed",
                 metadata=[],
             )
         ],
+        semantic_nodes=[],
         relations=[],
         review_items=[],
         covered_unit_ids=[],
@@ -232,7 +240,7 @@ def test_compiler_migration_is_idempotent(tmp_path) -> None:
     first = MigrationRunner(database).run()
     second = MigrationRunner(database).run()
 
-    assert first[-1].name == "knowledge_compiler_v2"
+    assert first[-1].name == "knowledge_compiler_v3_quality"
     assert second == []
 
 
@@ -260,8 +268,234 @@ def test_coverage_gate_rejects_false_complete_report() -> None:
         confidence=0.8,
     )
 
-    with pytest.raises(CoverageGateError, match="units remain incomplete"):
-        CoverageGate().validate_report(manifest, report)
+    bundle = asyncio.run(_compiled_bundle())
+    reconciled = CoverageGate().validate_report(
+        manifest,
+        report,
+        compilation=bundle,
+    )
+    assert reconciled.coverage_status == "incomplete"
+    assert reconciled.unit_assessments[-1].status == "incomplete"
+
+
+async def _compiled_bundle() -> CompilationBundle:
+    compiler = FakeCompilerClient()
+    source = _source()
+    manifest = await compiler.profile_source(source)
+    result = await compiler.compile_source_pass(
+        source,
+        manifest,
+        manifest.compilation_plan[0],
+        CompilationBundle(
+            evidence_items=[],
+            artifacts=[],
+            semantic_nodes=[],
+            relations=[],
+            review_items=[],
+            covered_unit_ids=[],
+            notes=[],
+        ),
+    )
+    return CompilationMerger().merge(CompilationMerger.empty(), result)
+
+
+def test_manifest_planner_adds_pass_for_unplanned_units() -> None:
+    compiler = FakeCompilerClient()
+    manifest = asyncio.run(compiler.profile_source(_source()))
+    incomplete = manifest.model_copy(
+        update={
+            "compilation_plan": [
+                CompilationPassPlan(
+                    pass_id="only_wiki",
+                    objective="Compile one unit.",
+                    target_unit_ids=["unit_wiki"],
+                    expected_outputs=["artifact"],
+                )
+            ]
+        }
+    )
+
+    normalized = ManifestPlanner().ensure_complete_plan(incomplete, max_passes=2)
+
+    planned = {
+        unit_id
+        for plan in normalized.compilation_plan
+        for unit_id in plan.target_unit_ids
+    }
+    assert planned == {"unit_wiki", "unit_rag", "unit_caveat"}
+    assert len(normalized.compilation_plan) == 2
+
+
+def test_pass_validation_rejects_target_unit_without_grounded_statement() -> None:
+    compiler = FakeCompilerClient()
+    source = _source()
+    manifest = asyncio.run(compiler.profile_source(source))
+    evidence = CompiledEvidence(
+        local_id="ev_only",
+        source_unit_ids=["unit_wiki"],
+        locator=manifest.content_units[0].locator,
+        modality="text",
+        content="Only wiki is represented.",
+        summary="Partial evidence.",
+        confidence=0.9,
+    )
+    artifact = CompiledArtifact(
+        local_id="art_only",
+        artifact_type="concept",
+        title="Only Wiki",
+        summary="Partial artifact.",
+        content="Only one source unit is compiled.",
+        aliases=[],
+        scope=[],
+        evidence_local_ids=["ev_only"],
+        source_unit_ids=["unit_wiki"],
+        related_artifact_local_ids=[],
+        statements=[
+            ArtifactStatement(
+                local_id="stmt_only",
+                statement_type="fact",
+                text="Only wiki is represented.",
+                subject="Wiki",
+                predicate="is",
+                object="represented",
+                object_type="text",
+                evidence_local_ids=["ev_only"],
+                source_unit_ids=["unit_wiki"],
+                qualifiers=[],
+                confidence=0.9,
+                status="active",
+            )
+        ],
+        confidence=0.9,
+        status="active",
+        review_status="unreviewed",
+        metadata=[],
+    )
+    result = CompilationPassResult(
+        pass_id="partial",
+        evidence_items=[evidence],
+        artifacts=[artifact],
+        semantic_nodes=[],
+        relations=[],
+        review_items=[],
+        covered_unit_ids=["unit_wiki", "unit_rag"],
+        notes=[],
+    )
+    merged = CompilationMerger().merge(CompilationMerger.empty(), result)
+    plan = CompilationPassPlan(
+        pass_id="partial",
+        objective="Compile wiki and RAG.",
+        target_unit_ids=["unit_wiki", "unit_rag"],
+        expected_outputs=["artifacts"],
+    )
+
+    with pytest.raises(CompilationValidationError, match="unit_rag"):
+        CompilationValidator().validate_pass(manifest, plan, result, merged)
+
+
+def test_coverage_gate_repairs_inconsistent_incomplete_report() -> None:
+    compiler = FakeCompilerClient()
+    source = _source()
+    manifest = asyncio.run(compiler.profile_source(source))
+    full_result = asyncio.run(
+        compiler.compile_source_pass(
+            source,
+            manifest,
+            manifest.compilation_plan[0],
+            CompilationMerger.empty(),
+        )
+    )
+    wiki_artifact = full_result.artifacts[0].model_copy(
+        update={
+            "evidence_local_ids": ["ev_wiki"],
+            "source_unit_ids": ["unit_wiki"],
+            "statements": [full_result.artifacts[0].statements[0]],
+        }
+    )
+    partial_result = full_result.model_copy(
+        update={
+            "evidence_items": [full_result.evidence_items[0]],
+            "artifacts": [wiki_artifact],
+            "semantic_nodes": [full_result.semantic_nodes[0]],
+            "relations": [],
+            "covered_unit_ids": ["unit_wiki"],
+        }
+    )
+    partial = CompilationMerger().merge(CompilationMerger.empty(), partial_result)
+    inconsistent = CoverageReport(
+        coverage_status="incomplete",
+        covered_unit_ids=["unit_wiki"],
+        unit_assessments=[
+            CoverageUnitAssessment(
+                unit_id=unit.local_id,
+                status="complete",
+                represented_knowledge=[unit.summary],
+                missing_knowledge=[],
+                confidence=0.9,
+            )
+            for unit in manifest.content_units
+        ],
+        missing_or_weak_areas=[],
+        provenance_issues=[],
+        overgeneralization_risks=[],
+        confidence=0.9,
+    )
+
+    reconciled = CoverageGate().reconcile(
+        manifest,
+        partial,
+        inconsistent,
+        iteration=0,
+    )
+
+    assert reconciled.covered_unit_ids == ["unit_wiki"]
+    assert reconciled.coverage_status == "incomplete"
+    assert {gap.likely_unit_ids[0] for gap in reconciled.missing_or_weak_areas} == {
+        "unit_rag",
+        "unit_caveat",
+    }
+    assessments = {item.unit_id: item for item in reconciled.unit_assessments}
+    assert assessments["unit_rag"].status == "incomplete"
+    assert assessments["unit_rag"].missing_knowledge
+
+
+def test_merger_preserves_existing_statements_when_artifact_is_enriched() -> None:
+    compiler = FakeCompilerClient()
+    source = _source()
+    manifest = asyncio.run(compiler.profile_source(source))
+    initial_result = asyncio.run(
+        compiler.compile_source_pass(
+            source,
+            manifest,
+            manifest.compilation_plan[0],
+            CompilationMerger.empty(),
+        )
+    )
+    initial = CompilationMerger().merge(CompilationMerger.empty(), initial_result)
+    artifact = initial_result.artifacts[0]
+    enrichment = artifact.model_copy(
+        update={
+            "content": "Additional grounded detail.",
+            "statements": [artifact.statements[1]],
+        }
+    )
+    incoming = initial_result.model_copy(
+        update={
+            "evidence_items": [],
+            "artifacts": [enrichment],
+            "semantic_nodes": [],
+            "relations": [],
+            "covered_unit_ids": ["unit_caveat"],
+        }
+    )
+
+    merged = CompilationMerger().merge(initial, incoming)
+    merged_artifact = next(
+        item for item in merged.artifacts if item.local_id == artifact.local_id
+    )
+
+    assert len(merged_artifact.statements) == 2
+    assert "Additional grounded detail." in merged_artifact.content
 
 
 def _source():
