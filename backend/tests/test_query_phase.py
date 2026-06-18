@@ -26,7 +26,6 @@ from backend.app.domain.query import (
     QuerySynthesisResult,
 )
 from backend.app.main import create_app
-from backend.app.repositories.extractions import SQLiteExtractionRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
 from backend.app.repositories.query import SQLiteQueryRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
@@ -35,10 +34,9 @@ from backend.app.services.evidence_ranker import EvidenceRanker
 from backend.app.services.llm_client import LLMRequest, LLMResponse
 from backend.app.services.query_engine import QueryEngine
 from backend.app.services.query_planner import QueryPlanner
-from backend.app.services.source_ingest import SourceIngestService
-from backend.app.services.source_page_writer import SourcePageWriter
 from backend.app.services.source_registry import RegisterSourceCommand, SourceRegistryService
 from backend.app.services.wiki_log import WikiLogWriter
+from backend.tests.compiler_fixtures import build_test_ingest_service
 
 
 class FakeIngestLLMClient:
@@ -237,8 +235,8 @@ def test_query_repository_searches_ingested_evidence(tmp_path) -> None:
 
     assert len(candidates) >= 2
     assert {candidate.locator for candidate in candidates} >= {
-        "section: llm-wiki",
-        "section: rag",
+        "section: concept",
+        "section: caveat",
     }
     assert all(candidate.claim_ids for candidate in candidates)
 
@@ -388,14 +386,6 @@ async def _seed_ingested_source(tmp_path):
             tags=("comparison",),
         )
     )
-    service = SourceIngestService(
-        source_repository=SQLiteSourceRepository(database),
-        extraction_repository=SQLiteExtractionRepository(database),
-        job_repository=SQLiteIngestJobRepository(database),
-        llm_client=FakeIngestLLMClient(),
-        source_page_writer=SourcePageWriter(wiki_dir),
-        wiki_log_writer=WikiLogWriter(wiki_dir),
-        max_file_bytes=50_000_000,
-    )
+    service = build_test_ingest_service(database, wiki_dir)
     await service.ingest(source.id)
     return database, wiki_dir, source

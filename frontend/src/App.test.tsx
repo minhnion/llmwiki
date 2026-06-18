@@ -60,6 +60,13 @@ class FakeWorkbenchService implements WorkbenchGateway {
       claim_count: 2,
       entity_count: 1,
       review_item_count: 0,
+      compiler_run_id: "crun_1",
+      pass_count: 1,
+      artifact_count: 2,
+      coverage_status: "complete",
+      graph_run_id: "grun_1",
+      relation_count: 1,
+      contradiction_count: 0,
     });
   buildGraph = vi.fn().mockResolvedValue({
     graph_run_id: "grun_1",
@@ -135,10 +142,10 @@ describe("App", () => {
 
     await waitFor(() => expect(service.ingestSource).toHaveBeenCalledWith("src_1"));
     expect(
-      await screen.findByText(/2 bằng chứng, 2 mệnh đề, 1 thực thể/i),
+      await screen.findByText(/2 artifact, coverage complete, 1 quan hệ graph/i),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Dựng graph" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dựng lại graph" }));
 
     await waitFor(() => expect(service.buildGraph).toHaveBeenCalledWith([]));
     expect(await screen.findByText(/Đã dựng graph: 1 quan hệ/i)).toBeInTheDocument();

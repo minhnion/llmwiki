@@ -6,7 +6,9 @@ from pydantic import BaseModel, Field
 
 from backend.app.application.container import AppContainer, get_container
 from backend.app.core.text import slugify
+from backend.app.domain.compiler import CompilationInspection
 from backend.app.domain.models import SourceRef
+from backend.app.repositories.compiler import SQLiteCompilerRepository
 from backend.app.repositories.extractions import SQLiteExtractionRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
@@ -64,6 +66,13 @@ class SourceIngestResponse(BaseModel):
     claim_count: int
     entity_count: int
     review_item_count: int
+    compiler_run_id: str
+    pass_count: int
+    artifact_count: int
+    coverage_status: str
+    graph_run_id: str
+    relation_count: int
+    contradiction_count: int
 
     @classmethod
     def from_domain(cls, result: SourceIngestResult) -> "SourceIngestResponse":
@@ -74,6 +83,13 @@ class SourceIngestResponse(BaseModel):
             claim_count=len(result.extraction.claims),
             entity_count=len(result.extraction.entities),
             review_item_count=len(result.extraction.review_items),
+            compiler_run_id=result.compiler_run_id,
+            pass_count=result.pass_count,
+            artifact_count=len(result.compilation.artifacts),
+            coverage_status=result.coverage.coverage_status,
+            graph_run_id=result.graph.graph_run_id,
+            relation_count=result.graph.relation_count,
+            contradiction_count=result.graph.contradiction_count,
         )
 
 
@@ -86,10 +102,13 @@ def build_source_registry(container: AppContainer) -> SourceRegistryService:
 
 
 def build_source_ingest(container: AppContainer) -> SourceIngestService:
+    from backend.app.api.routes.graph import build_graph_builder
+
     if not container.settings.openai_api_key:
         raise ValueError("OPENAI_API_KEY is required for ingest.")
     return SourceIngestService(
         source_repository=SQLiteSourceRepository(container.database),
+        compiler_repository=SQLiteCompilerRepository(container.database),
         extraction_repository=SQLiteExtractionRepository(container.database),
         job_repository=SQLiteIngestJobRepository(container.database),
         llm_client=OpenAIResponsesClient(
@@ -98,9 +117,17 @@ def build_source_ingest(container: AppContainer) -> SourceIngestService:
             max_output_tokens=container.settings.max_output_tokens,
             preferred_language=container.settings.preferred_language,
         ),
+        graph_builder=build_graph_builder(container),
         source_page_writer=SourcePageWriter(container.settings.wiki_dir),
         wiki_log_writer=WikiLogWriter(container.settings.wiki_dir),
         max_file_bytes=container.settings.max_file_bytes,
+        model=container.settings.openai_model,
+        compiler_version=container.settings.compiler_version,
+        prompt_version=container.settings.compiler_prompt_version,
+        schema_version=container.settings.compiler_schema_version,
+        max_passes=container.settings.compiler_max_passes,
+        max_pass_retries=container.settings.compiler_max_pass_retries,
+        max_audit_iterations=container.settings.compiler_max_audit_iterations,
     )
 
 
@@ -175,6 +202,20 @@ async def upload_source(
 def list_sources(container: ContainerDependency) -> list[SourceResponse]:
     repository = SQLiteSourceRepository(container.database)
     return [SourceResponse.from_domain(source) for source in repository.list()]
+
+
+@router.get("/{source_id}/compilation", response_model=CompilationInspection)
+def inspect_compilation(
+    source_id: str,
+    container: ContainerDependency,
+) -> CompilationInspection:
+    inspection = SQLiteCompilerRepository(container.database).get_latest_inspection(source_id)
+    if inspection is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Compilation run not found",
+        )
+    return inspection
 
 
 @router.post("/{source_id}/ingest", response_model=SourceIngestResponse)

@@ -1099,3 +1099,13 @@ Nguyên tắc trung tâm:
 
 Đây là foundation tổng quát: không phụ thuộc domain, không phụ thuộc một loại cấu trúc
 tài liệu, không quay về raw-chunk RAG và vẫn giữ raw source làm nền tảng kiểm chứng.
+
+## 16. Trạng thái triển khai
+
+Knowledge Compiler V2 foundation đã được triển khai với source manifest, dynamic multi-pass
+compilation, open artifacts, evidence local IDs, provenance validation, pass retry, per-unit
+coverage audit, follow-up compilation và graph tự động trong ingest.
+
+Embedding được giữ cho semantic retrieval phase tiếp theo. Phase hiện tại đã tạo Artifact
+Store và artifact FTS trong SQLite để có thể thêm vector index mà không thay đổi compiler IR.
+Chi tiết nằm tại `docs/knowledge-compiler-v2-implementation.md`.

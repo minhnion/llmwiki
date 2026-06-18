@@ -9,6 +9,7 @@ from backend.app.application.container import get_container
 from backend.app.db.migrations import MigrationRunner
 from backend.app.domain.graph import GraphBuildCommand
 from backend.app.domain.query import QueryAskCommand
+from backend.app.repositories.compiler import SQLiteCompilerRepository
 from backend.app.repositories.extractions import SQLiteExtractionRepository
 from backend.app.repositories.graph import SQLiteGraphRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
@@ -126,6 +127,7 @@ def main() -> None:
             raise SystemExit("OPENAI_API_KEY is required for ingest.")
         service = SourceIngestService(
             source_repository=SQLiteSourceRepository(container.database),
+            compiler_repository=SQLiteCompilerRepository(container.database),
             extraction_repository=SQLiteExtractionRepository(container.database),
             job_repository=SQLiteIngestJobRepository(container.database),
             llm_client=OpenAIResponsesClient(
@@ -134,9 +136,17 @@ def main() -> None:
                 max_output_tokens=container.settings.max_output_tokens,
                 preferred_language=container.settings.preferred_language,
             ),
+            graph_builder=build_graph_builder(container),
             source_page_writer=SourcePageWriter(container.settings.wiki_dir),
             wiki_log_writer=WikiLogWriter(container.settings.wiki_dir),
             max_file_bytes=container.settings.max_file_bytes,
+            model=container.settings.openai_model,
+            compiler_version=container.settings.compiler_version,
+            prompt_version=container.settings.compiler_prompt_version,
+            schema_version=container.settings.compiler_schema_version,
+            max_passes=container.settings.compiler_max_passes,
+            max_pass_retries=container.settings.compiler_max_pass_retries,
+            max_audit_iterations=container.settings.compiler_max_audit_iterations,
         )
         result = asyncio.run(service.ingest(args.source_id))
         print(f"Ingested {result.source.id}: {result.source.title}")
@@ -145,6 +155,11 @@ def main() -> None:
         print(f"claims: {len(result.extraction.claims)}")
         print(f"entities: {len(result.extraction.entities)}")
         print(f"review_items: {len(result.extraction.review_items)}")
+        print(f"compiler_run: {result.compiler_run_id}")
+        print(f"artifacts: {len(result.compilation.artifacts)}")
+        print(f"coverage: {result.coverage.coverage_status}")
+        print(f"graph_run: {result.graph.graph_run_id}")
+        print(f"relations: {result.graph.relation_count}")
         return
 
     if args.command == "query" and args.query_command == "ask":

@@ -10,6 +10,7 @@ Primary references:
 - `docs/artifact-first-llm-wiki-foundation.md`
 - `docs/llm-wiki-chatbot-solution.md`
 - `docs/implementation-architecture-current.md`
+- `docs/knowledge-compiler-v2-implementation.md`
 
 The core experiment is to compare a compounding LLM-maintained wiki against traditional RAG, especially for broad multi-domain corpora and synthesis-heavy questions.
 
@@ -159,12 +160,10 @@ Measure correctness, faithfulness, citation quality, contradiction handling, lat
 
 ## Current Repo State
 
-This repository currently has a Python/FastAPI backend plus a React/Vite/Tailwind
-workbench. The UI supports HTTP upload, ingest, source scoping, grounded chat with
-citations/evidence trace, knowledge graph build/visualization, entity inspection,
-and contradiction review. There is no default source seed; runtime sources are
-user-managed and may be present locally. Prompts preserve the source/question language
-with Vietnamese as the configured fallback.
+The repository currently implements Knowledge Compiler V2: LLM-generated source
+manifests, dynamic multi-pass compilation, open artifacts, source-local evidence IDs,
+coverage audit/follow-up, pass retry, and automatic graph build inside ingest. Embedding
+is deferred to the semantic retrieval phase; SQLite artifact FTS is already present.
 
 ## Project Commands
 

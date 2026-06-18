@@ -332,6 +332,194 @@ MIGRATIONS: tuple[Migration, ...] = (
         ON entity_merge_candidates(entity_b_id);
         """,
     ),
+    Migration(
+        version=5,
+        name="knowledge_compiler_v2",
+        sql="""
+        ALTER TABLE sources ADD COLUMN language TEXT;
+        ALTER TABLE sources ADD COLUMN compiler_version TEXT;
+        ALTER TABLE evidence_items ADD COLUMN local_id TEXT;
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_source_local_id
+        ON evidence_items(source_id, local_id)
+        WHERE local_id IS NOT NULL AND local_id != '';
+
+        CREATE TABLE IF NOT EXISTS compiler_runs (
+            id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            current_stage TEXT NOT NULL,
+            compiler_version TEXT NOT NULL,
+            prompt_version TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            model TEXT NOT NULL,
+            source_sha256 TEXT NOT NULL,
+            pass_count INTEGER NOT NULL DEFAULT 0,
+            coverage_status TEXT,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            error TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS source_manifests (
+            id TEXT PRIMARY KEY,
+            compiler_run_id TEXT NOT NULL UNIQUE,
+            source_id TEXT NOT NULL,
+            language TEXT NOT NULL,
+            manifest_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (compiler_run_id) REFERENCES compiler_runs(id) ON DELETE CASCADE,
+            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS source_units (
+            id TEXT PRIMARY KEY,
+            compiler_run_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            local_id TEXT NOT NULL,
+            label TEXT NOT NULL,
+            locator_json TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            importance REAL NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(compiler_run_id, local_id),
+            FOREIGN KEY (compiler_run_id) REFERENCES compiler_runs(id) ON DELETE CASCADE,
+            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS compiler_passes (
+            id TEXT PRIMARY KEY,
+            compiler_run_id TEXT NOT NULL,
+            pass_id TEXT NOT NULL,
+            iteration INTEGER NOT NULL,
+            objective TEXT NOT NULL,
+            target_unit_ids_json TEXT NOT NULL DEFAULT '[]',
+            expected_outputs_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL,
+            result_json TEXT,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            error TEXT,
+            UNIQUE(compiler_run_id, pass_id, iteration),
+            FOREIGN KEY (compiler_run_id) REFERENCES compiler_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS artifacts (
+            id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            local_id TEXT NOT NULL,
+            artifact_type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            content TEXT NOT NULL,
+            aliases_json TEXT NOT NULL DEFAULT '[]',
+            scope_json TEXT NOT NULL DEFAULT '[]',
+            confidence REAL NOT NULL,
+            status TEXT NOT NULL,
+            review_status TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '[]',
+            compiler_run_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(source_id, local_id),
+            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE,
+            FOREIGN KEY (compiler_run_id) REFERENCES compiler_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS artifact_versions (
+            id TEXT PRIMARY KEY,
+            artifact_id TEXT NOT NULL,
+            compiler_run_id TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            artifact_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(artifact_id, compiler_run_id),
+            FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE,
+            FOREIGN KEY (compiler_run_id) REFERENCES compiler_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS artifact_evidence (
+            artifact_id TEXT NOT NULL,
+            evidence_id TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            PRIMARY KEY (artifact_id, evidence_id),
+            FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE,
+            FOREIGN KEY (evidence_id) REFERENCES evidence_items(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS artifact_relations (
+            id TEXT PRIMARY KEY,
+            source_artifact_id TEXT NOT NULL,
+            target_artifact_id TEXT,
+            target_literal TEXT NOT NULL,
+            relation_type TEXT NOT NULL,
+            evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+            qualifiers_json TEXT NOT NULL DEFAULT '[]',
+            confidence REAL NOT NULL,
+            status TEXT NOT NULL,
+            compiler_run_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (source_artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE,
+            FOREIGN KEY (target_artifact_id) REFERENCES artifacts(id) ON DELETE SET NULL,
+            FOREIGN KEY (compiler_run_id) REFERENCES compiler_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS coverage_reports (
+            id TEXT PRIMARY KEY,
+            compiler_run_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            iteration INTEGER NOT NULL,
+            coverage_status TEXT NOT NULL,
+            report_json TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(compiler_run_id, iteration),
+            FOREIGN KEY (compiler_run_id) REFERENCES compiler_runs(id) ON DELETE CASCADE,
+            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS artifacts_fts
+        USING fts5(
+            id UNINDEXED,
+            source_id UNINDEXED,
+            artifact_type,
+            title,
+            aliases,
+            summary,
+            content
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS artifact_relations_fts
+        USING fts5(
+            id UNINDEXED,
+            source_artifact_id UNINDEXED,
+            relation_type,
+            target_literal
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_compiler_runs_source_id
+        ON compiler_runs(source_id, started_at);
+        CREATE INDEX IF NOT EXISTS idx_compiler_passes_run
+        ON compiler_passes(compiler_run_id, iteration);
+        CREATE INDEX IF NOT EXISTS idx_source_units_source
+        ON source_units(source_id);
+        CREATE INDEX IF NOT EXISTS idx_artifacts_source
+        ON artifacts(source_id);
+        CREATE INDEX IF NOT EXISTS idx_artifacts_type
+        ON artifacts(artifact_type);
+        CREATE INDEX IF NOT EXISTS idx_artifact_evidence_evidence
+        ON artifact_evidence(evidence_id);
+        CREATE INDEX IF NOT EXISTS idx_artifact_relations_source
+        ON artifact_relations(source_artifact_id);
+        CREATE INDEX IF NOT EXISTS idx_artifact_relations_target
+        ON artifact_relations(target_artifact_id);
+        CREATE INDEX IF NOT EXISTS idx_coverage_reports_source
+        ON coverage_reports(source_id, created_at);
+        """,
+    ),
 )
 
 

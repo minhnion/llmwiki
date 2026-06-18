@@ -15,6 +15,18 @@ def ingest_job_id() -> str:
     return f"job_{uuid4().hex[:16]}"
 
 
+def compiler_run_id() -> str:
+    return f"crun_{uuid4().hex[:16]}"
+
+
+def compiler_pass_run_id() -> str:
+    return f"cpass_{uuid4().hex[:16]}"
+
+
+def evidence_id_from_local(source_id: str, local_id: str) -> str:
+    return f"ev_{stable_hash(source_id, local_id, length=20)}"
+
+
 def evidence_id(source_id: str, locator: str, text: str | None, index: int) -> str:
     return f"ev_{stable_hash(source_id, locator, text or '', str(index), length=20)}"
 
@@ -72,3 +84,23 @@ def entity_merge_candidate_id(entity_a_id: str, entity_b_id: str) -> str:
 
 def entity_page_id(entity_id_value: str) -> str:
     return f"page_{stable_hash(entity_id_value, 'entity', length=20)}"
+
+
+def artifact_id(source_id: str, local_id: str) -> str:
+    return f"art_{stable_hash(source_id, local_id, length=20)}"
+
+
+def artifact_version_id(artifact_id_value: str, content_hash: str) -> str:
+    return f"artv_{stable_hash(artifact_id_value, content_hash, length=20)}"
+
+
+def artifact_relation_id(
+    source_artifact_id: str,
+    target_value: str,
+    relation_type: str,
+) -> str:
+    return f"aredge_{stable_hash(source_artifact_id, target_value, relation_type, length=20)}"
+
+
+def coverage_report_id(compiler_run_id_value: str, iteration: int) -> str:
+    return f"cov_{stable_hash(compiler_run_id_value, str(iteration), length=20)}"

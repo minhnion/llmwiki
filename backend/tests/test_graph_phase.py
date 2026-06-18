@@ -27,7 +27,6 @@ from backend.app.domain.graph import (
 from backend.app.domain.models import SourceRef
 from backend.app.domain.query import QueryPlan
 from backend.app.main import create_app
-from backend.app.repositories.extractions import SQLiteExtractionRepository
 from backend.app.repositories.graph import SQLiteGraphRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
 from backend.app.repositories.query import SQLiteQueryRepository
@@ -37,10 +36,9 @@ from backend.app.services.entity_page_writer import EntityPageWriter
 from backend.app.services.graph_builder import GraphBuilder
 from backend.app.services.graph_extractor import GraphExtractor
 from backend.app.services.llm_client import LLMRequest, LLMResponse
-from backend.app.services.source_ingest import SourceIngestService
-from backend.app.services.source_page_writer import SourcePageWriter
 from backend.app.services.source_registry import RegisterSourceCommand, SourceRegistryService
 from backend.app.services.wiki_log import WikiLogWriter
+from backend.tests.compiler_fixtures import build_test_ingest_service
 
 
 class FakeIngestLLMClient:
@@ -236,7 +234,7 @@ async def _run_graph_build_test(tmp_path) -> None:
         run_count = connection.execute("SELECT COUNT(*) FROM graph_runs").fetchone()[0]
 
     assert relation_count == 3
-    assert run_count == 1
+    assert run_count == 2
     assert result.graph_run_id in (wiki_dir / "log.md").read_text(encoding="utf-8")
 
 
@@ -374,13 +372,9 @@ async def _seed_ingested_source(tmp_path):
             tags=("graph",),
         )
     )
-    await SourceIngestService(
-        source_repository=SQLiteSourceRepository(database),
-        extraction_repository=SQLiteExtractionRepository(database),
-        job_repository=SQLiteIngestJobRepository(database),
-        llm_client=FakeIngestLLMClient(),
-        source_page_writer=SourcePageWriter(wiki_dir),
-        wiki_log_writer=WikiLogWriter(wiki_dir),
-        max_file_bytes=50_000_000,
+    await build_test_ingest_service(
+        database,
+        wiki_dir,
+        graph_client=FakeGraphLLMClient(),
     ).ingest(source.id)
     return database, wiki_dir, source

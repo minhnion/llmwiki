@@ -104,9 +104,11 @@ export default function App() {
         state: "success",
         message: (
           `${result.source.title}: ${result.evidence_count} bằng chứng, ` +
-          `${result.claim_count} mệnh đề, ${result.entity_count} thực thể.`
+          `${result.artifact_count} artifact, coverage ${result.coverage_status}, ` +
+          `${result.relation_count} quan hệ graph.`
         ),
       });
+      await Promise.all([loadGraph(), loadContradictions()]);
     } catch (error) {
       setStatus({ state: "error", message: errorMessage(error) });
     } finally {

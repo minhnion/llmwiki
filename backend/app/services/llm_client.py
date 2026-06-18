@@ -9,6 +9,16 @@ from typing import Protocol
 from openai import OpenAI
 
 from backend.app.core.text import compact_text
+from backend.app.domain.compiler import (
+    COMPILATION_PASS_JSON_SCHEMA,
+    COVERAGE_REPORT_JSON_SCHEMA,
+    SOURCE_MANIFEST_JSON_SCHEMA,
+    CompilationBundle,
+    CompilationPassPlan,
+    CompilationPassResult,
+    CoverageReport,
+    SourceManifest,
+)
 from backend.app.domain.extraction import (
     INGEST_EXTRACTION_JSON_SCHEMA,
     IngestExtractionResult,
@@ -103,6 +113,77 @@ class OpenAIResponsesClient:
             ],
         )
         return IngestExtractionResult.model_validate(payload)
+
+    async def profile_source(self, source: SourceRef) -> SourceManifest:
+        payload = await self._create_structured_response(
+            name="llm_wiki_source_manifest_v2",
+            schema=SOURCE_MANIFEST_JSON_SCHEMA,
+            instructions=_source_profile_instructions(self.preferred_language),
+            inputs=[_file_input(source, _source_profile_prompt(source))],
+        )
+        manifest = SourceManifest.model_validate(payload)
+        if manifest.source_id != source.id:
+            manifest = manifest.model_copy(update={"source_id": source.id})
+        return manifest
+
+    async def compile_source_pass(
+        self,
+        source: SourceRef,
+        manifest: SourceManifest,
+        plan: CompilationPassPlan,
+        existing: CompilationBundle,
+    ) -> CompilationPassResult:
+        payload = await self._create_structured_response(
+            name="llm_wiki_compilation_pass_v2",
+            schema=COMPILATION_PASS_JSON_SCHEMA,
+            instructions=_compilation_pass_instructions(self.preferred_language),
+            inputs=[
+                _file_input(
+                    source,
+                    json.dumps(
+                        {
+                            "source_id": source.id,
+                            "manifest": manifest.model_dump(),
+                            "pass_plan": plan.model_dump(),
+                            "existing_compilation": _compact_compilation(existing),
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+            ],
+        )
+        result = CompilationPassResult.model_validate(payload)
+        if result.pass_id != plan.pass_id:
+            result = result.model_copy(update={"pass_id": plan.pass_id})
+        return result
+
+    async def audit_compilation(
+        self,
+        source: SourceRef,
+        manifest: SourceManifest,
+        compilation: CompilationBundle,
+        iteration: int,
+    ) -> CoverageReport:
+        payload = await self._create_structured_response(
+            name="llm_wiki_coverage_report_v2",
+            schema=COVERAGE_REPORT_JSON_SCHEMA,
+            instructions=_coverage_audit_instructions(self.preferred_language),
+            inputs=[
+                _file_input(
+                    source,
+                    json.dumps(
+                        {
+                            "source_id": source.id,
+                            "audit_iteration": iteration,
+                            "manifest": manifest.model_dump(),
+                            "compiled_knowledge": _compact_compilation(compilation),
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+            ],
+        )
+        return CoverageReport.model_validate(payload)
 
     async def plan_query(self, command: QueryAskCommand) -> QueryPlan:
         payload = await self._create_structured_response(
@@ -289,6 +370,114 @@ def _base64_file_data(path: Path, mime_type: str | None) -> str:
     guessed_mime = mime_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     encoded = base64.b64encode(path.read_bytes()).decode("utf-8")
     return f"data:{guessed_mime};base64,{encoded}"
+
+
+def _file_input(source: SourceRef, prompt: str) -> dict[str, object]:
+    return {
+        "role": "user",
+        "content": [
+            {
+                "type": "input_file",
+                "filename": source.path.name,
+                "file_data": _base64_file_data(source.path, source.mime_type),
+            },
+            {"type": "input_text", "text": prompt},
+        ],
+    }
+
+
+def _source_profile_instructions(preferred_language: str) -> str:
+    return (
+        "Bạn là Source Profiler của một knowledge compiler tổng quát. Đọc trực tiếp toàn bộ "
+        "tệp và mô tả cấu trúc thực sự quan sát được, không áp taxonomy domain, keyword route, "
+        "fixed chunk hay template tài liệu có sẵn. Tạo content_units làm đơn vị điều hướng "
+        "semantic, mỗi unit có local_id duy nhất và locator kiểm tra được. Đề xuất knowledge "
+        "lenses và một dynamic compilation plan đủ bao phủ các unit quan trọng. Content unit "
+        "phải đủ hẹp để kiểm tra coverage độc lập; không gộp các chủ đề hoặc cơ chế khác nhau "
+        "chỉ vì chúng nằm gần nhau trong file. Các danh sách quy tắc, failure modes, mitigation, "
+        "acceptance criteria và stage khác nhau phải còn khả năng được kiểm tra riêng. Mỗi pass "
+        "phải "
+        "có mục tiêu khác biệt và target_unit_ids chỉ được tham chiếu unit đã khai báo. "
+        "Không trích xuất artifacts ở bước profiling. Giữ ngôn ngữ nguồn; nếu không xác định "
+        f"được thì dùng `{preferred_language}`. Chỉ trả JSON đúng schema."
+    )
+
+
+def _source_profile_prompt(source: SourceRef) -> str:
+    return (
+        f"Profile source `{source.id}` có tiêu đề `{source.title}`, loại "
+        f"`{source.source_type}` và SHA-256 `{source.sha256}`. Lập manifest và kế hoạch "
+        "biên dịch động để tri thức quan trọng, điều kiện, ngoại lệ, quan hệ, bảng/hình và "
+        "các vùng khó đọc không bị bỏ sót."
+    )
+
+
+def _compilation_pass_instructions(preferred_language: str) -> str:
+    return (
+        "Bạn là Knowledge Compiler V2 tổng quát. Thực hiện đúng pass_plan trên raw source, "
+        "manifest và compiled knowledge hiện có. Không dùng fixed chunks hoặc taxonomy domain. "
+        "Evidence phải bám sát nguồn, có local_id source-scoped duy nhất và locator kiểm tra "
+        "được. Artifact type và relation type là open strings do nội dung quyết định. "
+        "Mỗi source-backed artifact phải có evidence_local_ids. Mỗi factual statement phải "
+        "nguyên tử, có subject/predicate/object và evidence_local_ids để projection sang graph. "
+        "Với mỗi target unit, phải biên dịch các cơ chế, điều kiện, ngoại lệ, failure mode, "
+        "mitigation và acceptance criterion có ý nghĩa; không được thay cả unit bằng một câu "
+        "tóm tắt chung chung. Toàn bộ nội dung tự nhiên, gồm title, summary, content, statement, "
+        "relation và review item, phải cùng ngôn ngữ với manifest.language; chỉ giữ nguyên tên "
+        "riêng và thuật ngữ kỹ thuật cần thiết. "
+        "Không dùng locator text làm ID. Không lặp artifact/evidence đã có; nếu pass bổ sung "
+        "một artifact hiện có, dùng lại local_id đó với bản đầy đủ hơn. Relations chỉ được "
+        "tham chiếu artifact local IDs tồn tại trong output hiện tại hoặc compiled knowledge "
+        "đã cung cấp và phải có evidence. Giữ ngôn ngữ nguồn; nếu không xác định được thì dùng "
+        f"`{preferred_language}`. Không bịa, đưa bất định vào review_items. Chỉ trả JSON."
+    )
+
+
+def _coverage_audit_instructions(preferred_language: str) -> str:
+    return (
+        "Bạn là Coverage Auditor độc lập cho knowledge compiler. So sánh trực tiếp raw source "
+        "và source manifest với evidence, artifacts, statements và relations đã biên dịch. "
+        "Đánh giá coverage theo các knowledge units quan trọng, không theo số lượng artifact. "
+        "Bắt buộc tạo đúng một unit_assessment cho từng content unit trong manifest. Với từng "
+        "unit, đối chiếu trực tiếp raw source, liệt kê tri thức đã được biểu diễn và tri thức "
+        "còn thiếu; không suy ra complete chỉ từ covered_unit_ids do compiler tự khai báo. "
+        "Kiểm tra provenance thiếu/sai, nội dung bị khái quát quá mức, bảng/hình/ngoại lệ bị "
+        "bỏ sót, failure modes/mitigation/criteria bị mất và compilation loss. Chỉ trả complete "
+        "khi mọi unit có status complete, missing_knowledge rỗng, không còn gap quan trọng và "
+        "không còn provenance issue. "
+        "Nếu incomplete hoặc needs_review, đề xuất các follow-up pass cụ thể với pass_id mới "
+        "và target_unit_ids hợp lệ. Không đề xuất lại nội dung đã đủ. Viết theo ngôn ngữ nguồn, "
+        f"mặc định `{preferred_language}`. Chỉ trả JSON đúng schema."
+    )
+
+
+def _compact_compilation(bundle: CompilationBundle) -> dict[str, object]:
+    return {
+        "evidence": [
+            {
+                "local_id": item.local_id,
+                "locator": item.locator.model_dump(),
+                "summary": compact_text(item.summary, 280),
+                "content": compact_text(item.content, 700),
+            }
+            for item in bundle.evidence_items
+        ],
+        "artifacts": [
+            {
+                "local_id": item.local_id,
+                "artifact_type": item.artifact_type,
+                "title": item.title,
+                "summary": compact_text(item.summary, 400),
+                "content": compact_text(item.content, 1000),
+                "evidence_local_ids": item.evidence_local_ids,
+                "statements": [statement.model_dump() for statement in item.statements],
+            }
+            for item in bundle.artifacts
+        ],
+        "relations": [item.model_dump() for item in bundle.relations],
+        "covered_unit_ids": bundle.covered_unit_ids,
+        "review_items": [item.model_dump() for item in bundle.review_items],
+    }
 
 
 def _ingest_instructions(preferred_language: str) -> str:

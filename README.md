@@ -40,6 +40,9 @@ LLM_WIKI_MODEL=gpt-4o
 LLM_WIKI_PREFERRED_LANGUAGE=vi
 LLM_WIKI_MAX_FILE_BYTES=50000000
 LLM_WIKI_MAX_OUTPUT_TOKENS=6000
+LLM_WIKI_COMPILER_MAX_PASSES=8
+LLM_WIKI_COMPILER_MAX_PASS_RETRIES=2
+LLM_WIKI_COMPILER_MAX_AUDIT_ITERATIONS=2
 ```
 
 Run the API:
@@ -62,12 +65,10 @@ The application workflow is:
 
 1. Upload a source file.
 2. Ingest the registered source with the multimodal model.
-3. Build and explore the knowledge graph using the current manual graph step.
+3. Inspect the automatically built knowledge graph.
 4. Ask grounded questions and inspect citations/evidence.
 
-The manual graph step describes the current implementation. In the target foundation,
-graph integration runs automatically inside ingest; manual build becomes an admin
-rebuild/repair command.
+The graph build command is now an admin rebuild/repair action.
 
 OpenAI file input accepts common document formats including PDF, ODT, DOCX, PPTX,
 TXT, Markdown, and spreadsheets. For non-PDF documents such as ODT, the current
@@ -102,10 +103,12 @@ uv run python -m backend.app.cli sources ingest src_your_source_id
 
 Expected ingest outputs:
 
-- source status becomes `ingested`
+- source status becomes `ingested` or conservative `needs_review`
 - `wiki/sources/<source-title>-<source-id>.md` is generated
 - ignored runtime `wiki/log.md` gets an ingest entry
-- SQLite stores evidence, claims, entities, review items, wiki page metadata, and FTS rows
+- SQLite stores manifests, compiler passes, coverage reports, artifacts, evidence, claims,
+  graph state, wiki metadata, and FTS rows
+- knowledge graph is built automatically within ingest
 
 Ask a question against the ingested wiki/evidence store:
 
@@ -165,6 +168,7 @@ curl -X POST http://127.0.0.1:8020/api/sources/register \
 
 curl -X POST http://127.0.0.1:8020/api/sources/src_your_source_id/ingest
 curl http://127.0.0.1:8020/api/sources
+curl http://127.0.0.1:8020/api/sources/src_your_source_id/compilation
 
 curl -X POST http://127.0.0.1:8020/api/query \
   -H "Content-Type: application/json" \
@@ -198,5 +202,6 @@ pnpm build
 - `docs/artifact-first-llm-wiki-foundation.md`
 - `docs/llm-wiki-chatbot-solution.md`
 - `docs/implementation-architecture-current.md`
+- `docs/knowledge-compiler-v2-implementation.md`
 - `AGENTS.md`
 - `CLAUDE.md`

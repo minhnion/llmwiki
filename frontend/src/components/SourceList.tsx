@@ -36,7 +36,7 @@ export function SourceList({
       title="Tài liệu"
     >
       <p className="mb-3 rounded-md border border-cobalt/20 bg-cobalt/5 p-2 text-xs leading-5 text-muted">
-        Không chọn tài liệu nào: chat và build graph dùng toàn bộ tài liệu đã ingest.
+        Không chọn tài liệu nào: chat dùng toàn bộ tài liệu đã ingest.
         Chọn một hoặc nhiều tài liệu: chỉ dùng đúng phạm vi đã chọn.
       </p>
       <div className="mb-3 flex items-center justify-between gap-2">
@@ -49,7 +49,7 @@ export function SourceList({
           onClick={onBuildGraph}
           variant="secondary"
         >
-          Dựng graph
+          Dựng lại graph
         </Button>
       </div>
       <div className="max-h-[420px] space-y-2 overflow-auto pr-1">
@@ -75,7 +75,11 @@ export function SourceList({
                       <span>{source.source_type}</span>
                       <span>{formatBytes(source.size_bytes)}</span>
                       <span className={source.status === "ingested" ? "text-forest" : "text-amber"}>
-                        {source.status === "ingested" ? "đã ingest" : "đã đăng ký"}
+                        {source.status === "ingested"
+                          ? "đã ingest"
+                          : source.status === "needs_review"
+                            ? "cần rà soát"
+                            : source.status}
                       </span>
                     </div>
                   </div>
@@ -93,7 +97,7 @@ export function SourceList({
                     <input
                       checked={selected}
                       className="h-4 w-4 accent-forest"
-                      disabled={source.status !== "ingested"}
+                      disabled={!["ingested", "needs_review"].includes(source.status)}
                       onChange={() => onToggleSource(source.id)}
                       type="checkbox"
                     />

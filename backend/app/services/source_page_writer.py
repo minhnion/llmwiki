@@ -4,6 +4,7 @@ from backend.app.core.clock import utc_now_iso
 from backend.app.core.hashing import sha256_file
 from backend.app.core.ids import wiki_page_id
 from backend.app.core.text import slugify
+from backend.app.domain.compiler import CompilationBundle
 from backend.app.domain.extraction import IngestExtractionResult
 from backend.app.domain.models import SourceRef, WikiPage
 
@@ -12,13 +13,20 @@ class SourcePageWriter:
     def __init__(self, wiki_dir: Path) -> None:
         self.wiki_dir = wiki_dir
 
-    def write(self, source: SourceRef, extraction: IngestExtractionResult) -> WikiPage:
+    def write(
+        self,
+        source: SourceRef,
+        extraction: IngestExtractionResult,
+        compilation: CompilationBundle | None = None,
+    ) -> WikiPage:
         page_dir = self.wiki_dir / "sources"
         page_dir.mkdir(parents=True, exist_ok=True)
         page_path = page_dir / f"{slugify(extraction.source_title or source.title)}-{source.id}.md"
         now = utc_now_iso()
-        body = self._render_body(source, extraction, now)
-        page_path.write_text(body, encoding="utf-8")
+        body = self._render_body(source, extraction, now, compilation)
+        temporary_path = page_path.with_suffix(".md.tmp")
+        temporary_path.write_text(body, encoding="utf-8")
+        temporary_path.replace(page_path)
         self._update_index(source, extraction, page_path)
         return WikiPage(
             id=wiki_page_id(source.id),
@@ -38,7 +46,9 @@ class SourcePageWriter:
         source: SourceRef,
         extraction: IngestExtractionResult,
         timestamp: str,
+        compilation: CompilationBundle | None,
     ) -> str:
+        artifact_lines = self._artifact_lines(compilation)
         return "\n".join(
             [
                 "---",
@@ -82,6 +92,10 @@ class SourcePageWriter:
                     for claim in extraction.claims
                 ],
                 "",
+                "## Artifacts",
+                "",
+                *artifact_lines,
+                "",
                 "## Thực thể",
                 "",
                 *[
@@ -92,10 +106,7 @@ class SourcePageWriter:
                 "",
                 "## Mục cần rà soát",
                 "",
-                *[
-                    f"- **{item.severity} / {item.review_type}**: {item.title}. {item.body}"
-                    for item in extraction.review_items
-                ],
+                *self._review_lines(extraction),
                 "",
                 "## Câu hỏi mở",
                 "",
@@ -103,6 +114,28 @@ class SourcePageWriter:
                 "",
             ]
         )
+
+    @staticmethod
+    def _artifact_lines(compilation: CompilationBundle | None) -> list[str]:
+        if compilation is None or not compilation.artifacts:
+            return ["- Không có."]
+        return [
+            (
+                f"- **{artifact.title}** (`{artifact.artifact_type}`, "
+                f"`{artifact.local_id}`): {artifact.summary} "
+                f"(độ tin cậy {artifact.confidence:.2f})"
+            )
+            for artifact in compilation.artifacts
+        ]
+
+    @staticmethod
+    def _review_lines(extraction: IngestExtractionResult) -> list[str]:
+        if not extraction.review_items:
+            return ["- Không có."]
+        return [
+            f"- **{item.severity} / {item.review_type}**: {item.title}. {item.body}"
+            for item in extraction.review_items
+        ]
 
     def _update_index(
         self,

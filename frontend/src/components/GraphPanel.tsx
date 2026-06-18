@@ -40,7 +40,7 @@ export function GraphPanel({
           onClick={onBuildGraph}
           variant="secondary"
         >
-          Dựng
+          Dựng lại
         </Button>
       }
       title="Knowledge Graph"

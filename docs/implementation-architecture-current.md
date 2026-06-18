@@ -1,5 +1,10 @@
 # Kiến trúc kỹ thuật LLM Wiki hiện tại
 
+> Lưu ý: ingest đã được nâng cấp lên Knowledge Compiler V2. Phần mô tả one-shot extraction
+> bên dưới được giữ để giải thích read model tương thích `evidence/claims/entities`.
+> Orchestration hiện tại, source manifest, multi-pass artifacts, coverage gate và graph tự
+> động được mô tả tại `docs/knowledge-compiler-v2-implementation.md`.
+
 Tài liệu này mô tả implementation đang có trong codebase tại thời điểm hiện tại. Mục tiêu là giải thích hệ thống thực sự làm gì từ lúc người dùng tải tài liệu lên cho tới khi chatbot trả lời, knowledge graph được dựng ra sao, dữ liệu được lưu ở đâu và vai trò của từng lớp.
 
 Đây là tài liệu **as-is**, không phải kiến trúc đích. Foundation artifact-first mới,
@@ -25,7 +30,9 @@ Người dùng tải tệp
   -> frontend hiển thị source, chat, evidence và graph
 ```
 
-Hệ thống chưa dùng vector database, OCR engine hoặc document parser bắt buộc. File được gửi trực tiếp cho OpenAI Responses API. Đây là chủ ý của giai đoạn hiện tại để đánh giá năng lực multimodal trực tiếp của LLM/VLM trước khi thêm lớp tiền xử lý chuyên biệt.
+Hệ thống chưa dùng vector database, embedding, OCR engine hoặc document parser bắt buộc.
+File được gửi trực tiếp cho OpenAI Responses API. SQLite đã có Artifact Store và artifact
+FTS; embedding được dành cho semantic retrieval phase tiếp theo.
 
 ## Các lớp chính
 

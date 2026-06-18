@@ -6,6 +6,7 @@ from backend.app.core.ids import (
     claim_id,
     entity_id,
     evidence_id,
+    evidence_id_from_local,
     review_item_id,
 )
 from backend.app.domain.extraction import IngestExtractionResult
@@ -16,26 +17,36 @@ from backend.app.repositories.base import SQLiteRepository
 class SQLiteExtractionRepository(SQLiteRepository):
     def save(self, source: SourceRef, extraction: IngestExtractionResult, page: WikiPage) -> None:
         now = utc_now_iso()
-        evidence_by_locator: dict[str, str] = {}
+        evidence_by_local_id: dict[str, str] = {}
+        evidence_ids_by_locator: dict[str, list[str]] = {}
         claim_ids: list[str] = []
 
         with self.database.connect() as connection:
             self._delete_source_artifacts(connection, source.id)
 
             for index, evidence in enumerate(extraction.evidence_items):
-                current_evidence_id = evidence_id(source.id, evidence.locator, evidence.text, index)
-                evidence_by_locator[evidence.locator] = current_evidence_id
+                current_evidence_id = (
+                    evidence_id_from_local(source.id, evidence.local_id)
+                    if evidence.local_id
+                    else evidence_id(source.id, evidence.locator, evidence.text, index)
+                )
+                if evidence.local_id:
+                    evidence_by_local_id[evidence.local_id] = current_evidence_id
+                evidence_ids_by_locator.setdefault(evidence.locator, []).append(
+                    current_evidence_id
+                )
                 connection.execute(
                     """
                     INSERT INTO evidence_items (
-                        id, source_id, locator, modality, text, summary,
+                        id, source_id, local_id, locator, modality, text, summary,
                         confidence, created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         current_evidence_id,
                         source.id,
+                        evidence.local_id or None,
                         evidence.locator,
                         evidence.modality,
                         evidence.text,
@@ -100,10 +111,18 @@ class SQLiteExtractionRepository(SQLiteRepository):
                         claim.object,
                     ),
                 )
-                for locator in claim.evidence_locators:
-                    current_evidence_id = evidence_by_locator.get(locator)
-                    if current_evidence_id is None:
-                        continue
+                support_ids = [
+                    evidence_by_local_id[local_id]
+                    for local_id in claim.evidence_local_ids
+                    if local_id in evidence_by_local_id
+                ]
+                if not support_ids:
+                    support_ids = [
+                        evidence_ids_by_locator[locator][0]
+                        for locator in claim.evidence_locators
+                        if len(evidence_ids_by_locator.get(locator, [])) == 1
+                    ]
+                for current_evidence_id in dict.fromkeys(support_ids):
                     connection.execute(
                         """
                         INSERT OR IGNORE INTO claim_evidence (

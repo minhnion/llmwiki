@@ -21,6 +21,13 @@ export interface SourceIngestResult {
   claim_count: number;
   entity_count: number;
   review_item_count: number;
+  compiler_run_id: string;
+  pass_count: number;
+  artifact_count: number;
+  coverage_status: string;
+  graph_run_id: string;
+  relation_count: number;
+  contradiction_count: number;
 }
 
 export interface Citation {
