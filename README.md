@@ -6,12 +6,12 @@ evidence-backed wiki, open knowledge artifacts, semantic indexes, and an integra
 
 ## Current Status
 
-The current implementation includes source upload, one-pass OpenAI multimodal ingest,
-source-grounded chat, SQLite graph build/visualization, contradiction inspection, and
-a React workbench. The next foundation upgrade is specified in
-`docs/artifact-first-llm-wiki-foundation.md`: LLM-driven multi-pass compilation,
-coverage audit, graph integration during ingest, artifact semantic retrieval, and
-source re-inspection.
+The current implementation includes source upload, OpenAI multimodal/file ingest through
+the multi-pass Knowledge Compiler, source-grounded chat, SQLite artifact/wiki/evidence
+retrieval, automatic graph build, contradiction inspection, and a React workbench.
+Phase 1 is artifact-first: source manifests, open compilation passes, LLM-directed
+coverage hardening, wiki pages, artifact statements, artifact relations, and graph state
+are persisted or derived through SQLite plus Markdown.
 
 ## Quick Start
 
@@ -39,8 +39,11 @@ LLM_WIKI_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 LLM_WIKI_MODEL=gpt-4o
 LLM_WIKI_PREFERRED_LANGUAGE=vi
 LLM_WIKI_MAX_FILE_BYTES=50000000
-LLM_WIKI_MAX_OUTPUT_TOKENS=6000
-LLM_WIKI_COMPILER_MAX_PASSES=8
+LLM_WIKI_MAX_OUTPUT_TOKENS=16000
+LLM_WIKI_COMPILER_VERSION=knowledge-compiler-v3-quality
+LLM_WIKI_COMPILER_PROMPT_VERSION=compiler-prompts-v3
+LLM_WIKI_COMPILER_SCHEMA_VERSION=compiler-schema-v3
+LLM_WIKI_COMPILER_MAX_PASSES=16
 LLM_WIKI_COMPILER_MAX_PASS_RETRIES=2
 LLM_WIKI_COMPILER_MAX_AUDIT_ITERATIONS=2
 ```
@@ -59,12 +62,13 @@ pnpm install
 pnpm dev
 ```
 
-Open `http://127.0.0.1:5173`. The Vite dev server proxies `/api` to the backend on port `8020`.
+Open `http://127.0.0.1:5173`. The Vite dev server proxies `/api` to the backend URL
+from `frontend/.env` or the root `LLM_WIKI_HOST`/`LLM_WIKI_PORT` settings.
 
 The application workflow is:
 
 1. Upload a source file.
-2. Ingest the registered source with the multimodal model.
+2. Ingest the registered source with the Knowledge Compiler.
 3. Inspect the automatically built knowledge graph.
 4. Ask grounded questions and inspect citations/evidence.
 
@@ -95,7 +99,7 @@ cp /path/to/tai-lieu.pdf raw/sources/tai-lieu.pdf
 uv run python -m backend.app.cli sources register raw/sources/tai-lieu.pdf --title "Tài liệu của tôi" --type pdf
 ```
 
-Ingest a registered source with OpenAI multimodal/file input:
+Ingest a registered source with OpenAI multimodal/file input and the Knowledge Compiler:
 
 ```bash
 uv run python -m backend.app.cli sources ingest src_your_source_id
@@ -107,7 +111,7 @@ Expected ingest outputs:
 - `wiki/sources/<source-title>-<source-id>.md` is generated
 - ignored runtime `wiki/log.md` gets an ingest entry
 - SQLite stores manifests, compiler passes, coverage reports, artifacts, evidence, claims,
-  graph state, wiki metadata, and FTS rows
+  artifact statements/relations, graph state, wiki metadata, and FTS rows
 - knowledge graph is built automatically within ingest
 
 Ask a question against the ingested wiki/evidence store:

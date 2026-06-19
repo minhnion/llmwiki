@@ -24,6 +24,7 @@ from backend.app.main import create_app
 from backend.app.repositories.compiler import SQLiteCompilerRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
+from backend.app.services.artifact_projector import ArtifactProjector
 from backend.app.services.compilation_merger import CompilationMerger
 from backend.app.services.compilation_validator import (
     CompilationValidationError,
@@ -116,19 +117,23 @@ async def _run_coverage_follow_up_test(tmp_path) -> None:
     ).ingest(source.id)
 
     assert result.source.status == "ingested"
-    assert result.pass_count == 2
-    assert llm.compilation_calls == ["pass_core", "pass_caveat_follow_up"]
+    assert result.pass_count == 3
+    assert llm.compilation_calls == [
+        "pass_core",
+        "coverage_hardening_all_units",
+        "pass_caveat_follow_up",
+    ]
     assert llm.audit_calls == 2
     with sqlite3.connect(database.database_path) as connection:
         pass_count = connection.execute("SELECT COUNT(*) FROM compiler_passes").fetchone()[0]
         coverage_count = connection.execute(
             "SELECT COUNT(*) FROM coverage_reports"
         ).fetchone()[0]
-    assert pass_count == 2
+    assert pass_count == 3
     assert coverage_count == 2
     inspection = SQLiteCompilerRepository(database).get_latest_inspection(source.id)
     assert inspection is not None
-    assert inspection.pass_count == 2
+    assert inspection.pass_count == 3
     assert inspection.coverage_status == "complete"
     assert len(inspection.artifacts) == 2
     app = create_app()
@@ -190,12 +195,12 @@ async def _run_pass_retry_test(tmp_path) -> None:
     ).ingest(source.id)
 
     assert result.source.status == "ingested"
-    assert compiler.attempts == 2
+    assert compiler.attempts == 3
     with sqlite3.connect(database.database_path) as connection:
         statuses = connection.execute(
             "SELECT status FROM compiler_passes ORDER BY started_at, id"
         ).fetchall()
-    assert sorted(status[0] for status in statuses) == ["completed", "failed"]
+    assert sorted(status[0] for status in statuses) == ["completed", "completed", "failed"]
 
 
 def test_compilation_validator_rejects_dangling_evidence_reference() -> None:
@@ -496,6 +501,29 @@ def test_merger_preserves_existing_statements_when_artifact_is_enriched() -> Non
 
     assert len(merged_artifact.statements) == 2
     assert "Additional grounded detail." in merged_artifact.content
+
+
+def test_artifact_projector_adds_recurring_statement_subject_entity() -> None:
+    compiler = FakeCompilerClient()
+    source = _source()
+    manifest = asyncio.run(compiler.profile_source(source))
+    result = asyncio.run(
+        compiler.compile_source_pass(
+            source,
+            manifest,
+            manifest.compilation_plan[0],
+            CompilationMerger.empty(),
+        )
+    )
+    bundle = CompilationMerger().merge(CompilationMerger.empty(), result)
+    bundle = bundle.model_copy(update={"semantic_nodes": []})
+
+    projected = ArtifactProjector().project(source, manifest, bundle)
+    entities = {entity.name: entity for entity in projected.entities}
+
+    assert entities["LLM Wiki"].entity_type == "statement_subject"
+    assert entities["LLM Wiki"].evidence_local_ids == ["ev_wiki", "ev_caveat"]
+    assert "Traditional RAG" not in entities
 
 
 def _source():

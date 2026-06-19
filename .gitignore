@@ -12,6 +12,8 @@ venv/
 .env
 
 # Runtime data
+.phase1-eval/
+.phase1-eval-*/
 data/*.sqlite
 data/*.sqlite-*
 raw/sources/*
@@ -22,6 +24,7 @@ wiki/log.md
 wiki/sources/*
 wiki/entities/*
 wiki/knowledge/*
+!wiki/knowledge/phase-1-quality-hardening.md
 wiki/concepts/*
 wiki/events/*
 wiki/methods/*

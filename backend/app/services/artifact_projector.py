@@ -1,3 +1,5 @@
+from collections import Counter, defaultdict
+
 from backend.app.domain.compiler import CompilationBundle, SourceManifest
 from backend.app.domain.extraction import (
     ExtractedClaim,
@@ -63,6 +65,13 @@ class ArtifactProjector:
             )
             for node in bundle.semantic_nodes
         ]
+        entities.extend(
+            _fallback_statement_subject_entities(
+                entities,
+                bundle,
+                language=manifest.language,
+            )
+        )
         return IngestExtractionResult(
             source_title=source.title,
             source_summary=manifest.document_profile.summary,
@@ -117,3 +126,56 @@ class ArtifactProjector:
 
 def _render_locator(kind: str, value: str) -> str:
     return f"{kind}: {value}" if kind.strip() else value
+
+
+def _fallback_statement_subject_entities(
+    existing_entities: list[ExtractedEntity],
+    bundle: CompilationBundle,
+    language: str,
+) -> list[ExtractedEntity]:
+    known = {
+        value.lower()
+        for entity in existing_entities
+        for value in [entity.name, *entity.aliases]
+        if value.strip()
+    }
+    subject_counts = Counter(
+        statement.subject.strip()
+        for artifact in bundle.artifacts
+        for statement in artifact.statements
+        if statement.subject.strip()
+    )
+    evidence_by_subject: dict[str, list[str]] = defaultdict(list)
+    units_by_subject: dict[str, list[str]] = defaultdict(list)
+    for artifact in bundle.artifacts:
+        for statement in artifact.statements:
+            subject = statement.subject.strip()
+            if not subject:
+                continue
+            evidence_by_subject[subject].extend(statement.evidence_local_ids)
+            units_by_subject[subject].extend(statement.source_unit_ids)
+
+    description = (
+        "Chủ thể hoặc khái niệm lặp lại trong các mệnh đề đã biên dịch."
+        if language.lower().startswith("vi")
+        else "Recurring subject or concept from compiled source-backed statements."
+    )
+    fallback: list[ExtractedEntity] = []
+    for subject, count in sorted(subject_counts.items()):
+        normalized = subject.lower()
+        if count < 2 or normalized in known:
+            continue
+        fallback.append(
+            ExtractedEntity(
+                name=subject,
+                entity_type="statement_subject",
+                aliases=[],
+                description=description,
+                evidence_locators=[],
+                evidence_local_ids=list(dict.fromkeys(evidence_by_subject[subject])),
+                source_unit_ids=list(dict.fromkeys(units_by_subject[subject])),
+                confidence=0.72,
+            )
+        )
+        known.add(normalized)
+    return fallback

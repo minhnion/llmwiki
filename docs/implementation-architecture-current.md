@@ -1,6 +1,6 @@
 # Kiến trúc kỹ thuật LLM Wiki hiện tại
 
-> Lưu ý: ingest đã được nâng cấp lên Knowledge Compiler V2. Phần mô tả one-shot extraction
+> Lưu ý: ingest đã được nâng cấp lên Knowledge Compiler V3 quality. Phần mô tả one-shot extraction
 > bên dưới được giữ để giải thích read model tương thích `evidence/claims/entities`.
 > Orchestration hiện tại, source manifest, multi-pass artifacts, coverage gate và graph tự
 > động được mô tả tại `docs/knowledge-compiler-v2-implementation.md`.
@@ -20,9 +20,10 @@ artifact retrieval và source re-inspection, được mô tả tại
 Người dùng tải tệp
   -> đăng ký source và hash nội dung
   -> LLM/VLM đọc trực tiếp tệp
-  -> trích xuất evidence, claims, entities, review items
+  -> lập manifest source và các pass biên dịch artifact
+  -> validate provenance, hardening toàn nguồn theo contract mở và audit coverage
   -> sinh trang wiki Markdown
-  -> lưu dữ liệu có cấu trúc và FTS vào SQLite
+  -> lưu evidence, claims, artifacts, statements, relations và FTS vào SQLite
   -> dựng relation graph và phát hiện mâu thuẫn
   -> truy xuất đa kênh bằng SQLite FTS + graph
   -> LLM rerank bằng chứng

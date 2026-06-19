@@ -554,18 +554,21 @@ class SQLiteCompilerRepository(SQLiteRepository):
                     ),
                 )
 
-            relations = list(bundle.relations)
+            relations = _statement_relations(bundle)
+            relations.extend(bundle.relations)
             relation_keys = {
                 (
                     relation.source_artifact_local_id,
+                    relation.relation_type,
                     relation.target_artifact_local_id,
+                    relation.target_literal,
                 )
                 for relation in relations
                 if relation.target_artifact_local_id
             }
             for artifact in bundle.artifacts:
                 for related_local_id in artifact.related_artifact_local_ids:
-                    if (artifact.local_id, related_local_id) in relation_keys:
+                    if (artifact.local_id, "related_to", related_local_id, "") in relation_keys:
                         continue
                     relations.append(
                         CompiledRelation(
@@ -579,8 +582,18 @@ class SQLiteCompilerRepository(SQLiteRepository):
                             status=artifact.status,
                         )
                     )
-
+            deduped_relations: dict[tuple[str, str, str, str], CompiledRelation] = {}
             for relation in relations:
+                deduped_relations[
+                    (
+                        relation.source_artifact_local_id,
+                        relation.relation_type,
+                        relation.target_artifact_local_id,
+                        relation.target_literal,
+                    )
+                ] = relation
+
+            for relation in deduped_relations.values():
                 source_artifact_id = artifact_ids[relation.source_artifact_local_id]
                 target_artifact_id = artifact_ids.get(relation.target_artifact_local_id)
                 target_value = target_artifact_id or relation.target_literal
@@ -677,3 +690,24 @@ class SQLiteCompilerRepository(SQLiteRepository):
 
 def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _statement_relations(bundle: CompilationBundle) -> list[CompiledRelation]:
+    relations: list[CompiledRelation] = []
+    for artifact in bundle.artifacts:
+        for statement in artifact.statements:
+            if not statement.object.strip():
+                continue
+            relations.append(
+                CompiledRelation(
+                    source_artifact_local_id=artifact.local_id,
+                    target_artifact_local_id="",
+                    target_literal=statement.object,
+                    relation_type=statement.predicate,
+                    evidence_local_ids=statement.evidence_local_ids,
+                    qualifiers=statement.qualifiers,
+                    confidence=statement.confidence,
+                    status=statement.status,
+                )
+            )
+    return relations

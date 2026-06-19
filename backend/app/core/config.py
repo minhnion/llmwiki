@@ -39,7 +39,7 @@ class Settings(BaseSettings):
         default="compiler-schema-v3",
         alias="LLM_WIKI_COMPILER_SCHEMA_VERSION",
     )
-    compiler_max_passes: int = Field(default=12, alias="LLM_WIKI_COMPILER_MAX_PASSES")
+    compiler_max_passes: int = Field(default=16, alias="LLM_WIKI_COMPILER_MAX_PASSES")
     compiler_max_pass_retries: int = Field(
         default=2,
         alias="LLM_WIKI_COMPILER_MAX_PASS_RETRIES",

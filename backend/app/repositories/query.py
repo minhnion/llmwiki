@@ -38,6 +38,7 @@ class SQLiteQueryRepository(SQLiteRepository):
             channel_specs = (
                 ("artifact_statement", 4.6, self._search_statement_evidence_ids),
                 ("artifact", 4.3, self._search_artifact_evidence_ids),
+                ("artifact_relation", 4.1, self._search_artifact_relation_evidence_ids),
                 ("evidence", 4.0, self._search_evidence_ids),
                 ("claim", 3.0, self._search_claim_evidence_ids),
                 ("graph", 2.6, self._search_graph_evidence_ids),
@@ -189,6 +190,32 @@ class SQLiteQueryRepository(SQLiteRepository):
             WHERE artifact_statements_fts MATCH ?
             {filter_sql}
             ORDER BY bm25(artifact_statements_fts), ast.confidence DESC
+            LIMIT ?
+            """,
+            (fts_query, *params, limit),
+        ).fetchall()
+        return [row["evidence_id"] for row in rows]
+
+    def _search_artifact_relation_evidence_ids(
+        self,
+        connection,
+        fts_query: str,
+        source_ids: list[str],
+        tags: list[str],
+        limit: int,
+    ) -> list[str]:
+        filter_sql, params = _source_filter_sql("s", source_ids, tags)
+        rows = connection.execute(
+            f"""
+            SELECT json_each.value AS evidence_id
+            FROM artifact_relations_fts
+            JOIN artifact_relations ar ON ar.id = artifact_relations_fts.id
+            JOIN artifacts a ON a.id = ar.source_artifact_id
+            JOIN sources s ON s.id = a.source_id
+            JOIN json_each(ar.evidence_ids_json)
+            WHERE artifact_relations_fts MATCH ?
+            {filter_sql}
+            ORDER BY bm25(artifact_relations_fts), ar.confidence DESC
             LIMIT ?
             """,
             (fts_query, *params, limit),

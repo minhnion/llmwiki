@@ -155,7 +155,7 @@ Metadata tối thiểu:
   "source_type": "odt",
   "language": "vi",
   "status": "compiled",
-  "compiler_version": "knowledge-compiler-v2",
+  "compiler_version": "knowledge-compiler-v3-quality",
   "created_at": "...",
   "ingested_at": "..."
 }
@@ -1032,7 +1032,7 @@ Outcome:
 - Graph và wiki nhất quán ngay sau ingest.
 - Không còn manual graph step trong normal flow.
 
-### Stage 2: Knowledge Compiler V2
+### Stage 2: Knowledge Compiler V2/V3 Quality
 
 - Thêm SourceManifest.
 - Thêm dynamic compilation plan.
@@ -1040,6 +1040,8 @@ Outcome:
 - Thêm open Artifact Store.
 - Thêm Artifact Matcher/Wiki Integrator.
 - Thêm Coverage Auditor và follow-up pass.
+- Thêm hardening pass toàn nguồn theo contract mở để giảm compilation loss mà không dựa vào
+  keyword, regex hoặc taxonomy domain cố định.
 
 Outcome:
 
@@ -1102,9 +1104,10 @@ tài liệu, không quay về raw-chunk RAG và vẫn giữ raw source làm nề
 
 ## 16. Trạng thái triển khai
 
-Knowledge Compiler V2 foundation đã được triển khai với source manifest, dynamic multi-pass
-compilation, open artifacts, evidence local IDs, provenance validation, pass retry, per-unit
-coverage audit, follow-up compilation và graph tự động trong ingest.
+Knowledge Compiler V3 quality foundation đã được triển khai với source manifest, dynamic
+multi-pass compilation, open artifacts, evidence local IDs, provenance validation, pass
+retry, hardening pass, per-unit coverage audit, follow-up compilation và graph tự động
+trong ingest.
 
 Embedding được giữ cho semantic retrieval phase tiếp theo. Phase hiện tại đã tạo Artifact
 Store và artifact FTS trong SQLite để có thể thêm vector index mà không thay đổi compiler IR.

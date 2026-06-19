@@ -239,6 +239,10 @@ def test_query_repository_searches_ingested_evidence(tmp_path) -> None:
         "section: caveat",
     }
     assert all(candidate.claim_ids for candidate in candidates)
+    caveat_candidate = next(
+        candidate for candidate in candidates if candidate.locator == "section: caveat"
+    )
+    assert "artifact_relation" in caveat_candidate.retrieval_channels
 
 
 def test_query_engine_returns_grounded_answer_and_persists_trace(tmp_path) -> None:

@@ -63,7 +63,7 @@ class SourceIngestService:
         compiler_version: str,
         prompt_version: str,
         schema_version: str,
-        max_passes: int = 8,
+        max_passes: int = 16,
         max_pass_retries: int = 2,
         max_audit_iterations: int = 2,
         merger: CompilationMerger | None = None,
@@ -152,6 +152,16 @@ class SourceIngestService:
                 executed_passes += 1
             if executed_passes == 0:
                 raise ValueError("Source manifest did not provide a compilation plan.")
+            if executed_passes < self.max_passes:
+                compilation = await self._execute_pass(
+                    source,
+                    run_id,
+                    manifest,
+                    self._hardening_plan(manifest),
+                    compilation,
+                    iteration=0,
+                )
+                executed_passes += 1
 
             compilation, coverage, executed_passes = await self._audit_and_fill_gaps(
                 source,
@@ -430,5 +440,26 @@ class SourceIngestService:
             notes=[
                 "Fallback deterministic page plan used after invalid LLM wiki plans.",
                 str(last_error) if last_error else "",
+            ],
+        )
+
+    @staticmethod
+    def _hardening_plan(manifest: SourceManifest) -> CompilationPassPlan:
+        return CompilationPassPlan(
+            pass_id="coverage_hardening_all_units",
+            objective=(
+                "Đọc lại toàn bộ source sau các compilation pass ban đầu để tìm compilation "
+                "loss bằng chính ngữ cảnh của tài liệu. Bổ sung mọi tri thức quan trọng bị "
+                "sót khỏi evidence hoặc atomic statements, enrich artifact hiện có bằng cùng "
+                "local_id khi phù hợp, và giữ nội dung có thể kiểm chứng thay vì tóm tắt "
+                "chung chung. Không dựa vào keyword, regex hoặc taxonomy domain cố định."
+            ),
+            target_unit_ids=[unit.local_id for unit in manifest.content_units],
+            expected_outputs=[
+                "missing source-backed evidence",
+                "atomic statements for source-grounded factual details",
+                "open semantic nodes and relations when the source supports them",
+                "artifact enrichments or new artifacts with stable local IDs",
+                "review items for unresolved ambiguity or low-confidence merges",
             ],
         )

@@ -99,7 +99,7 @@ class CoverageGate:
                         objective=(
                             f"Biên dịch đầy đủ source unit `{unit.label}`. Tạo evidence, "
                             "artifact và atomic statements có source_unit_ids nhất quán; "
-                            "giữ mọi điều kiện, ngoại lệ, số liệu và quan hệ quan trọng."
+                            "giữ các chi tiết quan trọng theo chính ngữ cảnh source."
                         ),
                         target_unit_ids=[unit.local_id],
                         expected_outputs=[

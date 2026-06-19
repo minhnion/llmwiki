@@ -95,8 +95,8 @@ class ManifestPlanner:
             pass_id=pass_id,
             objective=(
                 "Biên dịch đầy đủ các semantic source units mà source profiler đã nhận diện "
-                "nhưng chưa đưa vào compilation plan. Giữ mọi dữ kiện, công thức, điều kiện, "
-                "ngoại lệ, quan hệ và provenance quan trọng của từng unit."
+                "nhưng chưa đưa vào compilation plan. Giữ mọi factual detail, quan hệ ngữ nghĩa "
+                "và provenance quan trọng theo chính ngữ cảnh của từng unit."
             ),
             target_unit_ids=target_unit_ids,
             expected_outputs=[
