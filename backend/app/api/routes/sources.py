@@ -11,10 +11,12 @@ from backend.app.domain.models import SourceRef
 from backend.app.repositories.compiler import SQLiteCompilerRepository
 from backend.app.repositories.extractions import SQLiteExtractionRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
+from backend.app.repositories.semantic import SQLiteSemanticRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
 from backend.app.repositories.wiki import SQLiteWikiRepository
 from backend.app.services.knowledge_page_writer import KnowledgePageWriter
 from backend.app.services.llm_client import OpenAIResponsesClient
+from backend.app.services.semantic_indexer import SemanticIndexer
 from backend.app.services.source_ingest import SourceIngestResult, SourceIngestService
 from backend.app.services.source_page_writer import SourcePageWriter
 from backend.app.services.source_registry import RegisterSourceCommand, SourceRegistryService
@@ -76,9 +78,13 @@ class SourceIngestResponse(BaseModel):
     relation_count: int
     contradiction_count: int
     wiki_page_count: int
+    indexed_artifact_count: int
+    embedding_count: int
+    knowledge_map_entry_count: int
 
     @classmethod
     def from_domain(cls, result: SourceIngestResult) -> "SourceIngestResponse":
+        semantic_index = result.semantic_index
         return cls(
             source=SourceResponse.from_domain(result.source),
             page_path=str(result.page.path),
@@ -94,6 +100,11 @@ class SourceIngestResponse(BaseModel):
             relation_count=result.graph.relation_count,
             contradiction_count=result.graph.contradiction_count,
             wiki_page_count=len(result.wiki_pages),
+            indexed_artifact_count=semantic_index.artifact_count if semantic_index else 0,
+            embedding_count=semantic_index.embedding_count if semantic_index else 0,
+            knowledge_map_entry_count=(
+                semantic_index.knowledge_map_entry_count if semantic_index else 0
+            ),
         )
 
 
@@ -110,17 +121,19 @@ def build_source_ingest(container: AppContainer) -> SourceIngestService:
 
     if not container.settings.openai_api_key:
         raise ValueError("OPENAI_API_KEY is required for ingest.")
+    llm_client = OpenAIResponsesClient(
+        api_key=container.settings.openai_api_key,
+        model=container.settings.openai_model,
+        max_output_tokens=container.settings.max_output_tokens,
+        preferred_language=container.settings.preferred_language,
+    )
+    semantic_repository = SQLiteSemanticRepository(container.database)
     return SourceIngestService(
         source_repository=SQLiteSourceRepository(container.database),
         compiler_repository=SQLiteCompilerRepository(container.database),
         extraction_repository=SQLiteExtractionRepository(container.database),
         job_repository=SQLiteIngestJobRepository(container.database),
-        llm_client=OpenAIResponsesClient(
-            api_key=container.settings.openai_api_key,
-            model=container.settings.openai_model,
-            max_output_tokens=container.settings.max_output_tokens,
-            preferred_language=container.settings.preferred_language,
-        ),
+        llm_client=llm_client,
         graph_builder=build_graph_builder(container),
         source_page_writer=SourcePageWriter(container.settings.wiki_dir),
         knowledge_page_writer=KnowledgePageWriter(container.settings.wiki_dir),
@@ -134,6 +147,11 @@ def build_source_ingest(container: AppContainer) -> SourceIngestService:
         max_passes=container.settings.compiler_max_passes,
         max_pass_retries=container.settings.compiler_max_pass_retries,
         max_audit_iterations=container.settings.compiler_max_audit_iterations,
+        semantic_indexer=SemanticIndexer(
+            repository=semantic_repository,
+            embedding_client=llm_client,
+            embedding_model=container.settings.openai_embedding_model,
+        ),
     )
 
 

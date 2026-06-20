@@ -1,15 +1,18 @@
 from backend.app.core.clock import utc_now_iso
 from backend.app.core.ids import query_run_id
 from backend.app.domain.query import (
+    ArtifactCandidate,
+    ArtifactRankingResult,
     EvidenceCandidate,
-    EvidenceRankingResult,
     QueryAskCommand,
     QueryResult,
     QuerySynthesisResult,
 )
 from backend.app.repositories.query import SQLiteQueryRepository
 from backend.app.services.answer_synthesizer import AnswerSynthesizer
-from backend.app.services.evidence_ranker import EvidenceRanker
+from backend.app.services.artifact_ranker import ArtifactRanker
+from backend.app.services.artifact_retriever import ArtifactRetriever
+from backend.app.services.knowledge_navigator import KnowledgeNavigator
 from backend.app.services.query_planner import QueryPlanner
 from backend.app.services.wiki_log import WikiLogWriter
 
@@ -19,12 +22,16 @@ class QueryEngine:
         self,
         repository: SQLiteQueryRepository,
         planner: QueryPlanner,
-        ranker: EvidenceRanker,
+        navigator: KnowledgeNavigator,
+        retriever: ArtifactRetriever,
+        ranker: ArtifactRanker,
         synthesizer: AnswerSynthesizer,
         wiki_log_writer: WikiLogWriter,
     ) -> None:
         self.repository = repository
         self.planner = planner
+        self.navigator = navigator
+        self.retriever = retriever
         self.ranker = ranker
         self.synthesizer = synthesizer
         self.wiki_log_writer = wiki_log_writer
@@ -38,9 +45,16 @@ class QueryEngine:
 
         created_at = utc_now_iso()
         plan = await self.planner.plan(normalized_command)
-        candidates = self.repository.search_evidence(
+        navigation = await self.navigator.navigate(
             question=normalized_question,
             plan=plan,
+            source_ids=normalized_command.source_ids,
+            max_artifacts=normalized_command.max_candidates,
+        )
+        candidates = await self.retriever.retrieve(
+            question=normalized_question,
+            plan=plan,
+            navigation=navigation,
             source_ids=normalized_command.source_ids,
             tags=normalized_command.tags,
             max_candidates=normalized_command.max_candidates,
@@ -49,6 +63,7 @@ class QueryEngine:
             question=normalized_question,
             plan=plan,
             candidates=candidates,
+            max_artifacts=normalized_command.max_candidates,
             max_evidence=normalized_command.max_evidence,
         )
         selected_evidence = _select_evidence(candidates, ranking.selected_evidence_ids)
@@ -80,7 +95,12 @@ class QueryEngine:
             candidate_count=len(candidates),
             created_at=created_at,
         )
-        self.repository.save_query_result(result, ranking)
+        self.repository.save_query_result(
+            result,
+            ranking,
+            artifact_candidates=candidates,
+            selected_artifact_ids=ranking.selected_artifact_ids,
+        )
         self.wiki_log_writer.append_query_answered(
             timestamp=created_at,
             query_id=result.query_id,
@@ -92,10 +112,14 @@ class QueryEngine:
 
 
 def _select_evidence(
-    candidates: list[EvidenceCandidate],
+    candidates: list[ArtifactCandidate],
     selected_ids: list[str],
 ) -> list[EvidenceCandidate]:
-    candidates_by_id = {candidate.evidence_id: candidate for candidate in candidates}
+    candidates_by_id = {
+        evidence.evidence_id: evidence
+        for candidate in candidates
+        for evidence in candidate.evidence
+    }
     return [
         candidates_by_id[evidence_id]
         for evidence_id in selected_ids
@@ -103,8 +127,8 @@ def _select_evidence(
     ]
 
 
-def _insufficient_synthesis(ranking: EvidenceRankingResult) -> QuerySynthesisResult:
-    open_questions = ranking.missing_evidence or [
+def _insufficient_synthesis(ranking: ArtifactRankingResult) -> QuerySynthesisResult:
+    open_questions = ranking.missing_knowledge or [
         "Hãy ingest thêm tài liệu liên quan hoặc mở rộng phạm vi tài liệu truy vấn."
     ]
     return QuerySynthesisResult(

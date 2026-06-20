@@ -31,9 +31,10 @@ Người dùng tải tệp
   -> frontend hiển thị source, chat, evidence và graph
 ```
 
-Hệ thống chưa dùng vector database, embedding, OCR engine hoặc document parser bắt buộc.
-File được gửi trực tiếp cho OpenAI Responses API. SQLite đã có Artifact Store và artifact
-FTS; embedding được dành cho semantic retrieval phase tiếp theo.
+Hệ thống chưa dùng external vector database, OCR engine hoặc document parser bắt buộc.
+File được gửi trực tiếp cho OpenAI Responses API. SQLite đã có Artifact Store, artifact
+FTS và artifact embeddings phục vụ Semantic Artifact Retrieval; vector được lưu trong
+SQLite trên compiled artifacts thay vì raw chunks.
 
 ## Các lớp chính
 

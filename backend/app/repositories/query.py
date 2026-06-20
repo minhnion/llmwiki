@@ -4,6 +4,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from backend.app.domain.query import (
+    ArtifactCandidate,
+    ArtifactRankingResult,
     EvidenceCandidate,
     EvidenceRankingResult,
     QueryPlan,
@@ -77,8 +79,13 @@ class SQLiteQueryRepository(SQLiteRepository):
     def save_query_result(
         self,
         result: QueryResult,
-        ranking: EvidenceRankingResult,
+        ranking: EvidenceRankingResult | ArtifactRankingResult,
+        artifact_candidates: list[ArtifactCandidate] | None = None,
+        selected_artifact_ids: list[str] | None = None,
     ) -> None:
+        artifact_candidates = artifact_candidates or []
+        selected_artifact_ids = selected_artifact_ids or []
+        selected_artifact_set = set(selected_artifact_ids)
         with self.database.connect() as connection:
             connection.execute(
                 """
@@ -103,6 +110,25 @@ class SQLiteQueryRepository(SQLiteRepository):
                     result.model_dump_json(),
                 ),
             )
+            for rank, candidate in enumerate(artifact_candidates, start=1):
+                connection.execute(
+                    """
+                    INSERT OR REPLACE INTO query_candidates (
+                        query_id, candidate_id, candidate_type, rank, score,
+                        selected, channels_json, payload_json
+                    )
+                    VALUES (?, ?, 'artifact', ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        result.query_id,
+                        candidate.artifact_id,
+                        rank,
+                        candidate.retrieval_score,
+                        1 if candidate.artifact_id in selected_artifact_set else 0,
+                        json.dumps(candidate.retrieval_channels),
+                        candidate.model_dump_json(),
+                    ),
+                )
             for citation in result.citations:
                 connection.execute(
                     """

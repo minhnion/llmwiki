@@ -13,10 +13,12 @@ from backend.app.repositories.compiler import SQLiteCompilerRepository
 from backend.app.repositories.extractions import SQLiteExtractionRepository
 from backend.app.repositories.graph import SQLiteGraphRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
+from backend.app.repositories.semantic import SQLiteSemanticRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
 from backend.app.repositories.wiki import SQLiteWikiRepository
 from backend.app.services.knowledge_page_writer import KnowledgePageWriter
 from backend.app.services.llm_client import OpenAIResponsesClient
+from backend.app.services.semantic_indexer import SemanticIndexer
 from backend.app.services.source_ingest import SourceIngestService
 from backend.app.services.source_page_writer import SourcePageWriter
 from backend.app.services.source_registry import RegisterSourceCommand, SourceRegistryService
@@ -56,6 +58,20 @@ def build_parser() -> argparse.ArgumentParser:
     ask_parser.add_argument("--max-candidates", type=int, default=24)
     ask_parser.add_argument("--max-evidence", type=int, default=8)
     ask_parser.add_argument("--json", action="store_true")
+
+    semantic_parser = subparsers.add_parser("semantic")
+    semantic_subparsers = semantic_parser.add_subparsers(
+        dest="semantic_command",
+        required=True,
+    )
+    semantic_index_parser = semantic_subparsers.add_parser("index")
+    semantic_index_parser.add_argument(
+        "--source-id",
+        dest="source_ids",
+        action="append",
+        default=[],
+    )
+    semantic_index_parser.add_argument("--json", action="store_true")
 
     graph_parser = subparsers.add_parser("graph")
     graph_subparsers = graph_parser.add_subparsers(dest="graph_command", required=True)
@@ -127,17 +143,19 @@ def main() -> None:
         MigrationRunner(container.database).run()
         if not container.settings.openai_api_key:
             raise SystemExit("OPENAI_API_KEY is required for ingest.")
+        llm_client = OpenAIResponsesClient(
+            api_key=container.settings.openai_api_key,
+            model=container.settings.openai_model,
+            max_output_tokens=container.settings.max_output_tokens,
+            preferred_language=container.settings.preferred_language,
+        )
+        semantic_repository = SQLiteSemanticRepository(container.database)
         service = SourceIngestService(
             source_repository=SQLiteSourceRepository(container.database),
             compiler_repository=SQLiteCompilerRepository(container.database),
             extraction_repository=SQLiteExtractionRepository(container.database),
             job_repository=SQLiteIngestJobRepository(container.database),
-            llm_client=OpenAIResponsesClient(
-                api_key=container.settings.openai_api_key,
-                model=container.settings.openai_model,
-                max_output_tokens=container.settings.max_output_tokens,
-                preferred_language=container.settings.preferred_language,
-            ),
+            llm_client=llm_client,
             graph_builder=build_graph_builder(container),
             source_page_writer=SourcePageWriter(container.settings.wiki_dir),
             knowledge_page_writer=KnowledgePageWriter(container.settings.wiki_dir),
@@ -151,6 +169,11 @@ def main() -> None:
             max_passes=container.settings.compiler_max_passes,
             max_pass_retries=container.settings.compiler_max_pass_retries,
             max_audit_iterations=container.settings.compiler_max_audit_iterations,
+            semantic_indexer=SemanticIndexer(
+                repository=semantic_repository,
+                embedding_client=llm_client,
+                embedding_model=container.settings.openai_embedding_model,
+            ),
         )
         result = asyncio.run(service.ingest(args.source_id))
         print(f"Ingested {result.source.id}: {result.source.title}")
@@ -165,6 +188,35 @@ def main() -> None:
         print(f"coverage: {result.coverage.coverage_status}")
         print(f"graph_run: {result.graph.graph_run_id}")
         print(f"relations: {result.graph.relation_count}")
+        if result.semantic_index is not None:
+            print(f"indexed_artifacts: {result.semantic_index.artifact_count}")
+            print(f"embeddings: {result.semantic_index.embedding_count}")
+            print(f"knowledge_map_entries: {result.semantic_index.knowledge_map_entry_count}")
+        return
+
+    if args.command == "semantic" and args.semantic_command == "index":
+        MigrationRunner(container.database).run()
+        if not container.settings.openai_api_key:
+            raise SystemExit("OPENAI_API_KEY is required for semantic indexing.")
+        llm_client = OpenAIResponsesClient(
+            api_key=container.settings.openai_api_key,
+            model=container.settings.openai_model,
+            max_output_tokens=container.settings.max_output_tokens,
+            preferred_language=container.settings.preferred_language,
+        )
+        result = asyncio.run(
+            SemanticIndexer(
+                repository=SQLiteSemanticRepository(container.database),
+                embedding_client=llm_client,
+                embedding_model=container.settings.openai_embedding_model,
+            ).index(source_ids=args.source_ids)
+        )
+        if args.json:
+            print(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
+            return
+        print(f"indexed_artifacts: {result.artifact_count}")
+        print(f"embeddings: {result.embedding_count}")
+        print(f"knowledge_map_entries: {result.knowledge_map_entry_count}")
         return
 
     if args.command == "query" and args.query_command == "ask":

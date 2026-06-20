@@ -5,8 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from backend.app.application.container import AppContainer, get_container
 from backend.app.domain.query import QueryAskCommand, QueryResult
 from backend.app.repositories.query import SQLiteQueryRepository
+from backend.app.repositories.semantic import SQLiteSemanticRepository
 from backend.app.services.answer_synthesizer import AnswerSynthesizer
-from backend.app.services.evidence_ranker import EvidenceRanker
+from backend.app.services.artifact_ranker import ArtifactRanker
+from backend.app.services.artifact_retriever import ArtifactRetriever
+from backend.app.services.knowledge_navigator import KnowledgeNavigator
 from backend.app.services.llm_client import OpenAIResponsesClient
 from backend.app.services.query_engine import QueryEngine
 from backend.app.services.query_planner import QueryPlanner
@@ -25,10 +28,17 @@ def build_query_engine(container: AppContainer) -> QueryEngine:
         max_output_tokens=container.settings.max_output_tokens,
         preferred_language=container.settings.preferred_language,
     )
+    semantic_repository = SQLiteSemanticRepository(container.database)
     return QueryEngine(
         repository=SQLiteQueryRepository(container.database),
         planner=QueryPlanner(llm_client),
-        ranker=EvidenceRanker(llm_client),
+        navigator=KnowledgeNavigator(semantic_repository, llm_client),
+        retriever=ArtifactRetriever(
+            repository=semantic_repository,
+            embedding_client=llm_client,
+            embedding_model=container.settings.openai_embedding_model,
+        ),
+        ranker=ArtifactRanker(llm_client),
         synthesizer=AnswerSynthesizer(llm_client),
         wiki_log_writer=WikiLogWriter(container.settings.wiki_dir),
     )

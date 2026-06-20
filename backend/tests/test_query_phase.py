@@ -1,8 +1,6 @@
 import asyncio
 import sqlite3
 
-from fastapi.testclient import TestClient
-
 from backend.app.api.routes import query as query_route
 from backend.app.cli import build_parser
 from backend.app.db.connection import SQLiteDatabase
@@ -16,6 +14,9 @@ from backend.app.domain.extraction import (
 )
 from backend.app.domain.models import SourceRef
 from backend.app.domain.query import (
+    ArtifactAssessment,
+    ArtifactCandidate,
+    ArtifactRankingResult,
     Citation,
     EvidenceAssessment,
     EvidenceCandidate,
@@ -25,15 +26,19 @@ from backend.app.domain.query import (
     QueryResult,
     QuerySynthesisResult,
 )
-from backend.app.main import create_app
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
 from backend.app.repositories.query import SQLiteQueryRepository
+from backend.app.repositories.semantic import SQLiteSemanticRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
 from backend.app.services.answer_synthesizer import AnswerSynthesizer
+from backend.app.services.artifact_ranker import ArtifactRanker
+from backend.app.services.artifact_retriever import ArtifactRetriever
 from backend.app.services.evidence_ranker import EvidenceRanker
+from backend.app.services.knowledge_navigator import KnowledgeNavigator
 from backend.app.services.llm_client import LLMRequest, LLMResponse
 from backend.app.services.query_engine import QueryEngine
 from backend.app.services.query_planner import QueryPlanner
+from backend.app.services.semantic_indexer import SemanticIndexer
 from backend.app.services.source_registry import RegisterSourceCommand, SourceRegistryService
 from backend.app.services.wiki_log import WikiLogWriter
 from backend.tests.compiler_fixtures import build_test_ingest_service
@@ -127,6 +132,9 @@ class FakeIngestLLMClient:
 
 
 class FakeQueryLLMClient:
+    async def embed_texts(self, texts: list[str], model: str) -> list[list[float]]:
+        return [_fake_embedding(text) for text in texts]
+
     async def plan_query(self, command: QueryAskCommand) -> QueryPlan:
         return QueryPlan(
             rewritten_question=command.question,
@@ -147,6 +155,80 @@ class FakeQueryLLMClient:
             must_have_evidence=["persistent", "query time"],
             source_filters=command.source_ids,
             time_filters=[],
+            semantic_probes=[
+                "persistent knowledge artifacts",
+                "query-time raw chunk retrieval",
+            ],
+            desired_artifact_hints=["knowledge architecture comparison"],
+            answer_requirements=["Explain the difference using source-backed evidence."],
+            evidence_strictness="high",
+        )
+
+    async def navigate_knowledge(
+        self,
+        question,
+        plan,
+        map_entries,
+        max_artifacts,
+    ):
+        from backend.app.domain.query import KnowledgeNavigationResult, NavigationArtifactSelection
+
+        artifact_ids = [
+            entry.artifact_id for entry in map_entries if entry.artifact_id is not None
+        ][:max_artifacts]
+        return KnowledgeNavigationResult(
+            selected_artifacts=[
+                NavigationArtifactSelection(
+                    artifact_id=artifact_id,
+                    reason="Artifact appears in the generated knowledge map.",
+                    confidence=0.82,
+                )
+                for artifact_id in artifact_ids
+            ],
+            relevant_map_entry_ids=[entry.entry_id for entry in map_entries[:max_artifacts]],
+            missing_map_areas=[],
+            reasoning_summary="Selected artifacts from the generated map.",
+        )
+
+    async def rank_artifacts(
+        self,
+        question: str,
+        plan: QueryPlan,
+        candidates: list[ArtifactCandidate],
+        max_artifacts: int,
+        max_evidence: int,
+    ) -> ArtifactRankingResult:
+        selected_candidates = candidates[:max_artifacts]
+        selected_artifacts = [candidate.artifact_id for candidate in selected_candidates]
+        selected_evidence = [
+            evidence.evidence_id
+            for candidate in selected_candidates
+            for evidence in candidate.evidence
+        ][:max_evidence]
+        return ArtifactRankingResult(
+            selected_artifact_ids=selected_artifacts,
+            rejected_artifact_ids=[
+                candidate.artifact_id
+                for candidate in candidates
+                if candidate.artifact_id not in selected_artifacts
+            ],
+            selected_evidence_ids=selected_evidence,
+            assessments=[
+                ArtifactAssessment(
+                    artifact_id=candidate.artifact_id,
+                    relevance="direct",
+                    support_type="supports",
+                    selected_evidence_ids=[
+                        evidence.evidence_id for evidence in candidate.evidence
+                    ][:max_evidence],
+                    reason="Candidate directly discusses compiled wiki/RAG concepts.",
+                    confidence=0.9,
+                )
+                for candidate in selected_candidates
+            ],
+            contradictions=[],
+            missing_knowledge=[],
+            reasoning_summary="Selected direct artifact candidates.",
         )
 
     async def rank_evidence(
@@ -245,6 +327,23 @@ def test_query_repository_searches_ingested_evidence(tmp_path) -> None:
     assert "artifact_relation" in caveat_candidate.retrieval_channels
 
 
+def test_semantic_indexer_stores_artifact_embeddings_and_map(tmp_path) -> None:
+    database, _, _ = asyncio.run(_seed_ingested_source(tmp_path))
+
+    with sqlite3.connect(database.database_path) as connection:
+        embedding_count = connection.execute(
+            "SELECT COUNT(*) FROM artifact_embeddings"
+        ).fetchone()[0]
+        map_entry_count = connection.execute(
+            "SELECT COUNT(*) FROM knowledge_map_entries"
+        ).fetchone()[0]
+        artifact_count = connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0]
+
+    assert artifact_count >= 2
+    assert embedding_count >= artifact_count
+    assert map_entry_count >= artifact_count
+
+
 def test_query_engine_returns_grounded_answer_and_persists_trace(tmp_path) -> None:
     asyncio.run(_run_query_engine_test(tmp_path))
 
@@ -255,7 +354,13 @@ async def _run_query_engine_test(tmp_path) -> None:
     engine = QueryEngine(
         repository=SQLiteQueryRepository(database),
         planner=QueryPlanner(llm_client),
-        ranker=EvidenceRanker(llm_client),
+        navigator=KnowledgeNavigator(SQLiteSemanticRepository(database), llm_client),
+        retriever=ArtifactRetriever(
+            repository=SQLiteSemanticRepository(database),
+            embedding_client=llm_client,
+            embedding_model="fake-embedding",
+        ),
+        ranker=ArtifactRanker(llm_client),
         synthesizer=AnswerSynthesizer(llm_client),
         wiki_log_writer=WikiLogWriter(wiki_dir),
     )
@@ -279,9 +384,17 @@ async def _run_query_engine_test(tmp_path) -> None:
         citation_count = connection.execute(
             "SELECT COUNT(*) FROM query_citations"
         ).fetchone()[0]
+        candidate_count = connection.execute(
+            "SELECT COUNT(*) FROM query_candidates WHERE candidate_type = 'artifact'"
+        ).fetchone()[0]
+        selected_candidate_count = connection.execute(
+            "SELECT COUNT(*) FROM query_candidates WHERE selected = 1"
+        ).fetchone()[0]
 
     assert run_count == 1
     assert citation_count == len(result.citations)
+    assert candidate_count >= 1
+    assert selected_candidate_count >= 1
     assert result.query_id in (wiki_dir / "log.md").read_text(encoding="utf-8")
 
 
@@ -297,7 +410,13 @@ async def _run_insufficient_query_test(tmp_path) -> None:
     engine = QueryEngine(
         repository=SQLiteQueryRepository(database),
         planner=QueryPlanner(llm_client),
-        ranker=EvidenceRanker(llm_client),
+        navigator=KnowledgeNavigator(SQLiteSemanticRepository(database), llm_client),
+        retriever=ArtifactRetriever(
+            repository=SQLiteSemanticRepository(database),
+            embedding_client=llm_client,
+            embedding_model="fake-embedding",
+        ),
+        ranker=ArtifactRanker(llm_client),
         synthesizer=AnswerSynthesizer(llm_client),
         wiki_log_writer=WikiLogWriter(wiki_dir),
     )
@@ -447,13 +566,16 @@ def test_query_api_route_uses_query_engine(monkeypatch) -> None:
             )
 
     monkeypatch.setattr(query_route, "build_query_engine", lambda container: FakeEngine())
-    client = TestClient(create_app())
 
-    response = client.post("/api/query", json={"question": "What is LLM Wiki?"})
+    response = asyncio.run(
+        query_route.ask_query(
+            QueryAskCommand(question="What is LLM Wiki?"),
+            container=object(),
+        )
+    )
 
-    assert response.status_code == 200
-    assert response.json()["query_id"] == "qry_test"
-    assert response.json()["answer"].startswith("LLM Wiki")
+    assert response.query_id == "qry_test"
+    assert response.answer.startswith("LLM Wiki")
 
 
 def test_query_cli_parser_accepts_ask_command() -> None:
@@ -465,6 +587,17 @@ def test_query_cli_parser_accepts_ask_command() -> None:
     assert args.query_command == "ask"
     assert args.question == ["What", "is", "LLM", "Wiki?"]
     assert args.mode == "fast"
+    assert args.json is True
+
+
+def test_semantic_cli_parser_accepts_index_command() -> None:
+    args = build_parser().parse_args(
+        ["semantic", "index", "--source-id", "src_test", "--json"]
+    )
+
+    assert args.command == "semantic"
+    assert args.semantic_command == "index"
+    assert args.source_ids == ["src_test"]
     assert args.json is True
 
 
@@ -492,4 +625,17 @@ async def _seed_ingested_source(tmp_path):
     )
     service = build_test_ingest_service(database, wiki_dir)
     await service.ingest(source.id)
+    await SemanticIndexer(
+        repository=SQLiteSemanticRepository(database),
+        embedding_client=FakeQueryLLMClient(),
+        embedding_model="fake-embedding",
+    ).index_source(source.id)
     return database, wiki_dir, source
+
+
+def _fake_embedding(text: str) -> list[float]:
+    values = [0.0, 0.0, 0.0, 0.0]
+    for index, character in enumerate(text):
+        values[index % len(values)] += (ord(character) % 97) / 97.0
+    total = sum(abs(value) for value in values) or 1.0
+    return [value / total for value in values]

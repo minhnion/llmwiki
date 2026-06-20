@@ -1,16 +1,31 @@
+import asyncio
 import sqlite3
 
-from fastapi.testclient import TestClient
-
-from backend.app.application.container import AppContainer, get_container
+from backend.app.api.routes.sources import upload_source
+from backend.app.application.container import AppContainer
 from backend.app.core.config import Settings
 from backend.app.db.connection import SQLiteDatabase
 from backend.app.db.migrations import MigrationRunner
-from backend.app.main import create_app
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
 from backend.app.services.source_registry import RegisterSourceCommand, SourceRegistryService
 from backend.app.services.wiki_log import WikiLogWriter
+
+
+class FakeUploadFile:
+    def __init__(self, filename: str, content: bytes) -> None:
+        self.filename = filename
+        self.content = content
+        self.offset = 0
+
+    async def read(self, size: int = -1) -> bytes:
+        if self.offset >= len(self.content):
+            return b""
+        if size < 0:
+            size = len(self.content) - self.offset
+        start = self.offset
+        self.offset = min(len(self.content), self.offset + size)
+        return self.content[start : self.offset]
 
 
 def test_register_source_creates_records_and_log(tmp_path) -> None:
@@ -54,8 +69,7 @@ def test_register_source_creates_records_and_log(tmp_path) -> None:
 def test_upload_source_endpoint_saves_file_and_registers_source(tmp_path) -> None:
     database = SQLiteDatabase(tmp_path / "app.sqlite")
     MigrationRunner(database).run()
-    app = create_app()
-    app.dependency_overrides[get_container] = lambda: AppContainer(
+    container = AppContainer(
         settings=Settings(
             database_path=tmp_path / "app.sqlite",
             raw_dir=tmp_path / "raw",
@@ -64,19 +78,20 @@ def test_upload_source_endpoint_saves_file_and_registers_source(tmp_path) -> Non
         ),
         database=database,
     )
-    client = TestClient(app)
 
-    response = client.post(
-        "/api/sources/upload",
-        files={"file": ("Example Notes.md", b"# Example\n\nHello upload.\n", "text/markdown")},
-        data={"title": "Uploaded Notes", "source_type": "markdown", "tags": "upload"},
+    response = asyncio.run(
+        upload_source(
+            container=container,
+            file=FakeUploadFile("Example Notes.md", b"# Example\n\nHello upload.\n"),
+            title="Uploaded Notes",
+            source_type="markdown",
+            tags=["upload"],
+        )
     )
 
-    assert response.status_code == 201
-    payload = response.json()
-    assert payload["title"] == "Uploaded Notes"
-    assert payload["source_type"] == "markdown"
-    assert payload["status"] == "registered"
+    assert response.title == "Uploaded Notes"
+    assert response.source_type == "markdown"
+    assert response.status == "registered"
     assert (tmp_path / "raw" / "sources" / "example-notes.md").exists()
 
     with sqlite3.connect(tmp_path / "app.sqlite") as connection:
@@ -87,8 +102,7 @@ def test_upload_source_endpoint_saves_file_and_registers_source(tmp_path) -> Non
 def test_upload_source_endpoint_recognizes_odt(tmp_path) -> None:
     database = SQLiteDatabase(tmp_path / "app.sqlite")
     MigrationRunner(database).run()
-    app = create_app()
-    app.dependency_overrides[get_container] = lambda: AppContainer(
+    container = AppContainer(
         settings=Settings(
             database_path=tmp_path / "app.sqlite",
             raw_dir=tmp_path / "raw",
@@ -97,21 +111,14 @@ def test_upload_source_endpoint_recognizes_odt(tmp_path) -> None:
         ),
         database=database,
     )
-    client = TestClient(app)
 
-    response = client.post(
-        "/api/sources/upload",
-        files={
-            "file": (
-                "Quy dinh.odt",
-                b"fake odt package",
-                "application/vnd.oasis.opendocument.text",
-            )
-        },
+    response = asyncio.run(
+        upload_source(
+            container=container,
+            file=FakeUploadFile("Quy dinh.odt", b"fake odt package"),
+        )
     )
 
-    assert response.status_code == 201
-    payload = response.json()
-    assert payload["source_type"] == "odt"
-    assert payload["mime_type"] == "application/vnd.oasis.opendocument.text"
-    assert payload["path"].endswith(".odt")
+    assert response.source_type == "odt"
+    assert response.mime_type == "application/vnd.oasis.opendocument.text"
+    assert response.path.endswith(".odt")

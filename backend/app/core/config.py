@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     )
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o", alias="LLM_WIKI_MODEL")
+    openai_embedding_model: str = Field(
+        default="text-embedding-3-small",
+        alias="LLM_WIKI_EMBEDDING_MODEL",
+    )
     preferred_language: str = Field(default="vi", alias="LLM_WIKI_PREFERRED_LANGUAGE")
     max_file_bytes: int = Field(default=50_000_000, alias="LLM_WIKI_MAX_FILE_BYTES")
     max_output_tokens: int = Field(default=16000, alias="LLM_WIKI_MAX_OUTPUT_TOKENS")

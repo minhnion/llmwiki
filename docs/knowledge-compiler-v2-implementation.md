@@ -20,9 +20,10 @@ register
   -> ingested | needs_review | failed
 ```
 
-Embedding chưa được dùng trong phase này. Artifact FTS5 đã được tạo để phục vụ exact
-retrieval và làm nền cho semantic retrieval phase sau. Khi thêm embedding, vector sẽ được
-lưu SQLite trước và model embedding sẽ là cấu hình riêng; Artifact Store không phải đổi.
+Semantic Artifact Retrieval đã được thêm sau phase compiler: artifact representations được
+embed bằng model cấu hình qua `LLM_WIKI_EMBEDDING_MODEL`, vector lưu trong SQLite, và
+Artifact FTS5 tiếp tục phục vụ exact retrieval. Artifact Store không phải đổi vì embedding
+được lập trên compiled artifacts, statements, relations và wiki map thay vì raw chunks.
 
 ## Contract
 

@@ -27,6 +27,7 @@ from backend.app.services.coverage_gate import CoverageGate
 from backend.app.services.graph_builder import GraphBuilder
 from backend.app.services.knowledge_page_writer import KnowledgePageWriter
 from backend.app.services.manifest_planner import ManifestPlanner
+from backend.app.services.semantic_indexer import SemanticIndexer, SemanticIndexResult
 from backend.app.services.source_page_writer import SourcePageWriter
 from backend.app.services.wiki_log import WikiLogWriter
 
@@ -42,6 +43,7 @@ class SourceIngestResult:
     compilation: CompilationBundle
     coverage: CoverageReport
     graph: GraphBuildResult
+    semantic_index: SemanticIndexResult | None
     pass_count: int
 
 
@@ -71,6 +73,7 @@ class SourceIngestService:
         projector: ArtifactProjector | None = None,
         coverage_gate: CoverageGate | None = None,
         manifest_planner: ManifestPlanner | None = None,
+        semantic_indexer: SemanticIndexer | None = None,
     ) -> None:
         self.source_repository = source_repository
         self.compiler_repository = compiler_repository
@@ -95,6 +98,7 @@ class SourceIngestService:
         self.projector = projector or ArtifactProjector()
         self.coverage_gate = coverage_gate or CoverageGate()
         self.manifest_planner = manifest_planner or ManifestPlanner()
+        self.semantic_indexer = semantic_indexer
 
     async def ingest(self, source_id: str) -> SourceIngestResult:
         source = self.source_repository.get(source_id)
@@ -223,6 +227,15 @@ class SourceIngestService:
             graph = await self.graph_builder.build(
                 GraphBuildCommand(source_ids=[source.id], rebuild=True)
             )
+            semantic_index = None
+            if self.semantic_indexer is not None:
+                self.compiler_repository.update_stage(
+                    run_id,
+                    source.id,
+                    "indexing",
+                    utc_now_iso(),
+                )
+                semantic_index = await self.semantic_indexer.index_source(source.id)
             finished_at = utc_now_iso()
             final_status = (
                 "ingested" if coverage.coverage_status == "complete" else "needs_review"
@@ -261,6 +274,7 @@ class SourceIngestService:
                 compilation=compilation,
                 coverage=coverage,
                 graph=graph,
+                semantic_index=semantic_index,
                 pass_count=executed_passes,
             )
         except Exception as exc:

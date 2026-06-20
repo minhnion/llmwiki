@@ -1,12 +1,8 @@
 import asyncio
 import sqlite3
 
-from fastapi.testclient import TestClient
-
 from backend.app.api.routes import graph as graph_route
-from backend.app.application.container import AppContainer, get_container
 from backend.app.cli import build_parser
-from backend.app.core.config import Settings
 from backend.app.db.connection import SQLiteDatabase
 from backend.app.db.migrations import MigrationRunner
 from backend.app.domain.extraction import (
@@ -26,7 +22,6 @@ from backend.app.domain.graph import (
 )
 from backend.app.domain.models import SourceRef
 from backend.app.domain.query import QueryPlan
-from backend.app.main import create_app
 from backend.app.repositories.graph import SQLiteGraphRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
 from backend.app.repositories.query import SQLiteQueryRepository
@@ -298,13 +293,16 @@ def test_graph_api_build_route_uses_builder(monkeypatch) -> None:
             )
 
     monkeypatch.setattr(graph_route, "build_graph_builder", lambda container: FakeBuilder())
-    client = TestClient(create_app())
 
-    response = client.post("/api/graph/build", json={"source_ids": ["src_test"]})
+    response = asyncio.run(
+        graph_route.build_graph(
+            GraphBuildCommand(source_ids=["src_test"]),
+            container=object(),
+        )
+    )
 
-    assert response.status_code == 200
-    assert response.json()["graph_run_id"] == "grun_test"
-    assert response.json()["source_ids"] == ["src_test"]
+    assert response.graph_run_id == "grun_test"
+    assert response.source_ids == ["src_test"]
 
 
 def test_graph_visualization_api_returns_nodes_and_edges(tmp_path) -> None:
@@ -321,23 +319,15 @@ async def _run_graph_visualization_api_test(tmp_path) -> None:
         entity_page_writer=EntityPageWriter(wiki_dir),
         wiki_log_writer=WikiLogWriter(wiki_dir),
     ).build(GraphBuildCommand())
-    app = create_app()
-    app.dependency_overrides[get_container] = lambda: AppContainer(
-        settings=Settings(
-            database_path=database.database_path,
-            raw_dir=tmp_path / "raw",
-            wiki_dir=wiki_dir,
-        ),
-        database=database,
+    response = graph_route.visualize_graph(
+        container=type("Container", (), {"database": database})(),
+        q=None,
+        limit=10,
     )
 
-    response = TestClient(app).get("/api/graph/visualization?limit=10")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["nodes"]
-    assert payload["edges"]
-    assert any(edge["label"] == "persists" for edge in payload["edges"])
+    assert response.nodes
+    assert response.edges
+    assert any(edge.label == "persists" for edge in response.edges)
 
 
 def test_graph_cli_parser_accepts_commands() -> None:

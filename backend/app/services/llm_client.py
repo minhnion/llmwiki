@@ -34,11 +34,17 @@ from backend.app.domain.graph import (
 )
 from backend.app.domain.models import SourceRef
 from backend.app.domain.query import (
+    ARTIFACT_RANKING_JSON_SCHEMA,
     EVIDENCE_RANKING_JSON_SCHEMA,
+    KNOWLEDGE_NAVIGATION_JSON_SCHEMA,
     QUERY_PLAN_JSON_SCHEMA,
     QUERY_SYNTHESIS_JSON_SCHEMA,
+    ArtifactCandidate,
+    ArtifactRankingResult,
     EvidenceCandidate,
     EvidenceRankingResult,
+    KnowledgeMapEntryCandidate,
+    KnowledgeNavigationResult,
     QueryAskCommand,
     QueryPlan,
     QuerySynthesisResult,
@@ -63,6 +69,9 @@ class LLMClient(Protocol):
 
     async def extract_source(self, source: SourceRef) -> IngestExtractionResult:
         """Extract wiki-ready knowledge from a source file."""
+
+    async def embed_texts(self, texts: list[str], model: str) -> list[list[float]]:
+        """Embed texts for semantic artifact retrieval."""
 
 
 class OpenAIResponsesClient:
@@ -90,6 +99,16 @@ class OpenAIResponsesClient:
             max_output_tokens=self.max_output_tokens,
         )
         return LLMResponse(text=response.output_text)
+
+    async def embed_texts(self, texts: list[str], model: str) -> list[list[float]]:
+        if not texts:
+            return []
+        response = await asyncio.to_thread(
+            self.client.embeddings.create,
+            model=model,
+            input=texts,
+        )
+        return [list(item.embedding) for item in response.data]
 
     async def extract_source(self, source: SourceRef) -> IngestExtractionResult:
         file_data = _base64_file_data(source.path, source.mime_type)
@@ -239,6 +258,87 @@ class OpenAIResponsesClient:
             ],
         )
         return QueryPlan.model_validate(payload)
+
+    async def navigate_knowledge(
+        self,
+        question: str,
+        plan: QueryPlan,
+        map_entries: list[KnowledgeMapEntryCandidate],
+        max_artifacts: int,
+    ) -> KnowledgeNavigationResult:
+        payload = await self._create_structured_response(
+            name="llm_wiki_knowledge_navigation",
+            schema=KNOWLEDGE_NAVIGATION_JSON_SCHEMA,
+            instructions=_knowledge_navigation_instructions(
+                max_artifacts,
+                self.preferred_language,
+            ),
+            inputs=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": json.dumps(
+                                {
+                                    "question": question,
+                                    "plan": plan.model_dump(),
+                                    "max_artifacts": max_artifacts,
+                                    "knowledge_map_entries": [
+                                        _map_entry_payload(entry)
+                                        for entry in map_entries
+                                    ],
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    ],
+                }
+            ],
+        )
+        return KnowledgeNavigationResult.model_validate(payload)
+
+    async def rank_artifacts(
+        self,
+        question: str,
+        plan: QueryPlan,
+        candidates: list[ArtifactCandidate],
+        max_artifacts: int,
+        max_evidence: int,
+    ) -> ArtifactRankingResult:
+        payload = await self._create_structured_response(
+            name="llm_wiki_artifact_ranking",
+            schema=ARTIFACT_RANKING_JSON_SCHEMA,
+            instructions=_artifact_ranking_instructions(
+                max_artifacts,
+                max_evidence,
+                self.preferred_language,
+            ),
+            inputs=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": json.dumps(
+                                {
+                                    "question": question,
+                                    "plan": plan.model_dump(),
+                                    "max_artifacts": max_artifacts,
+                                    "max_evidence": max_evidence,
+                                    "candidates": [
+                                        _artifact_candidate_payload(candidate)
+                                        for candidate in candidates
+                                    ],
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    ],
+                }
+            ],
+        )
+        return ArtifactRankingResult.model_validate(payload)
 
     async def rank_evidence(
         self,
@@ -604,13 +704,47 @@ def _source_prompt(source: SourceRef, preferred_language: str) -> str:
 def _query_plan_instructions(preferred_language: str) -> str:
     return (
         "Bạn là bộ lập kế hoạch truy vấn cho LLM Wiki tổng quát. "
-        "Chuyển câu hỏi thành kế hoạch retrieval độc lập domain cho SQLite FTS trên evidence, "
-        "claims, entities, relation graph và wiki pages. Giữ từ khóa, gợi ý thực thể và "
-        "câu hỏi con bằng ngôn ngữ của người hỏi để tăng recall; chỉ thêm biến thể ngôn ngữ "
-        "khác khi thực sự giúp tìm tên riêng hoặc thuật ngữ trong nguồn. "
+        "Chuyển câu hỏi thành kế hoạch semantic retrieval độc lập domain trên compiled "
+        "artifacts, artifact statements, compiled evidence, wiki map và graph. "
+        "semantic_probes là các diễn đạt ý nghĩa mà hệ thống sẽ embed/search; "
+        "desired_artifact_hints là mô tả mềm về loại artifact cần tìm, không phải enum "
+        "đóng hoặc route keyword. Giữ từ khóa, gợi ý thực thể và câu hỏi con bằng ngôn ngữ "
+        "của người hỏi để tăng recall chính xác; chỉ thêm biến thể ngôn ngữ khác khi thực "
+        "sự giúp tìm tên riêng hoặc thuật ngữ trong nguồn. graph_policy đặt giới hạn traversal "
+        "nhỏ, relation_hints là gợi ý mềm theo câu hỏi. "
         f"Nếu không xác định được ngôn ngữ câu hỏi, dùng `{preferred_language}`. "
         "Trường answer_language phải đúng ngôn ngữ câu hỏi. Không trả lời câu hỏi ở bước này. "
         "Chỉ trả về JSON đúng schema."
+    )
+
+
+def _knowledge_navigation_instructions(max_artifacts: int, preferred_language: str) -> str:
+    return (
+        "Bạn là navigator của LLM Wiki. Đọc knowledge_map_entries như một catalog phân cấp "
+        "wiki page -> compiled artifact, rồi chọn các artifact_id có khả năng liên quan về "
+        f"ngữ nghĩa đến câu hỏi, tối đa {max_artifacts}. Không dùng taxonomy cố định, không "
+        "suy diễn ngoài map, không bịa artifact_id hoặc entry_id. Nếu map thiếu vùng tri thức "
+        "cần thiết, ghi vào missing_map_areas thay vì chọn bừa. Lý do viết theo ngôn ngữ câu "
+        f"hỏi, mặc định `{preferred_language}`. Chỉ trả JSON đúng schema."
+    )
+
+
+def _artifact_ranking_instructions(
+    max_artifacts: int,
+    max_evidence: int,
+    preferred_language: str,
+) -> str:
+    return (
+        "Bạn là artifact reranker cho LLM Wiki artifact-first. Đánh giá candidate artifacts "
+        "theo câu hỏi, query plan, retrieval signals, statements và evidence summaries. "
+        f"Chọn tối đa {max_artifacts} artifact_id và tối đa {max_evidence} evidence_id thực "
+        "sự hỗ trợ câu trả lời. Phân biệt direct, supporting, qualifying, conflicting, "
+        "background và irrelevant. Nếu artifact chỉ liên quan chung hoặc không có evidence "
+        "cụ thể, không chọn evidence_id đó. Nếu không có artifact/evidence đủ trực tiếp, "
+        "selected_artifact_ids và selected_evidence_ids phải rỗng; không chọn top candidate "
+        "chỉ để luôn có kết quả. Không bịa artifact_id hoặc evidence_id. Nêu missing_knowledge "
+        "khi compiled artifacts không đủ trả lời. "
+        f"Viết reason theo ngôn ngữ câu hỏi, mặc định `{preferred_language}`. Chỉ trả JSON."
     )
 
 
@@ -680,6 +814,69 @@ def _candidate_payload(candidate: EvidenceCandidate) -> dict[str, object]:
         "entities": candidate.entities[:20],
         "retrieval_score": candidate.retrieval_score,
         "retrieval_channels": candidate.retrieval_channels,
+    }
+
+
+def _map_entry_payload(entry: KnowledgeMapEntryCandidate) -> dict[str, object]:
+    return {
+        "entry_id": entry.entry_id,
+        "parent_entry_id": entry.parent_entry_id,
+        "page_id": entry.page_id,
+        "artifact_id": entry.artifact_id,
+        "entry_type": entry.entry_type,
+        "title": compact_text(entry.title, 240),
+        "summary": compact_text(entry.summary, 500),
+        "source_ids": entry.source_ids,
+    }
+
+
+def _artifact_candidate_payload(candidate: ArtifactCandidate) -> dict[str, object]:
+    return {
+        "artifact_id": candidate.artifact_id,
+        "source_id": candidate.source_id,
+        "source_title": candidate.source_title,
+        "wiki_page_path": candidate.wiki_page_path,
+        "artifact_type": candidate.artifact_type,
+        "title": compact_text(candidate.title, 240),
+        "summary": compact_text(candidate.summary, 700),
+        "content": compact_text(candidate.content, 1200),
+        "aliases": candidate.aliases[:20],
+        "scope": candidate.scope[:20],
+        "confidence": candidate.confidence,
+        "status": candidate.status,
+        "review_status": candidate.review_status,
+        "retrieval_score": candidate.retrieval_score,
+        "retrieval_channels": candidate.retrieval_channels,
+        "retrieval_signals": [
+            signal.model_dump() for signal in candidate.retrieval_signals[:12]
+        ],
+        "graph_depth": candidate.graph_depth,
+        "statements": [
+            {
+                "statement_id": statement.statement_id,
+                "statement_type": statement.statement_type,
+                "text": compact_text(statement.text, 500),
+                "subject": compact_text(statement.subject, 160),
+                "predicate": compact_text(statement.predicate, 160),
+                "object": compact_text(statement.object, 240),
+                "confidence": statement.confidence,
+                "status": statement.status,
+                "evidence_ids": statement.evidence_ids,
+            }
+            for statement in candidate.statements[:20]
+        ],
+        "evidence": [
+            {
+                "evidence_id": evidence.evidence_id,
+                "locator": evidence.locator,
+                "text": compact_text(evidence.text, 700),
+                "summary": compact_text(evidence.summary, 400),
+                "confidence": evidence.confidence,
+                "claim_ids": evidence.claim_ids,
+                "claims": [compact_text(claim, 300) for claim in evidence.claims[:6]],
+            }
+            for evidence in candidate.evidence[:12]
+        ],
     }
 
 

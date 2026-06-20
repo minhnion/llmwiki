@@ -656,6 +656,88 @@ MIGRATIONS: tuple[Migration, ...] = (
         ON wiki_page_artifacts(artifact_id);
         """,
     ),
+    Migration(
+        version=7,
+        name="semantic_artifact_retrieval",
+        sql="""
+        CREATE TABLE IF NOT EXISTS artifact_embeddings (
+            id TEXT PRIMARY KEY,
+            artifact_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            representation_type TEXT NOT NULL,
+            embedding_model TEXT NOT NULL,
+            dimensions INTEGER NOT NULL,
+            vector_json TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(artifact_id, representation_type, embedding_model),
+            FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE,
+            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS knowledge_maps (
+            id TEXT PRIMARY KEY,
+            map_type TEXT NOT NULL,
+            source_scope_json TEXT NOT NULL DEFAULT '[]',
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            map_json TEXT NOT NULL DEFAULT '{}',
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(map_type, source_scope_json)
+        );
+
+        CREATE TABLE IF NOT EXISTS knowledge_map_entries (
+            id TEXT PRIMARY KEY,
+            map_id TEXT NOT NULL,
+            parent_entry_id TEXT,
+            page_id TEXT,
+            artifact_id TEXT,
+            entry_type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            source_ids_json TEXT NOT NULL DEFAULT '[]',
+            confidence REAL NOT NULL DEFAULT 1.0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (map_id) REFERENCES knowledge_maps(id) ON DELETE CASCADE,
+            FOREIGN KEY (parent_entry_id) REFERENCES knowledge_map_entries(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (page_id) REFERENCES wiki_pages(id) ON DELETE CASCADE,
+            FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS query_candidates (
+            query_id TEXT NOT NULL,
+            candidate_id TEXT NOT NULL,
+            candidate_type TEXT NOT NULL,
+            rank INTEGER NOT NULL,
+            score REAL NOT NULL,
+            selected INTEGER NOT NULL DEFAULT 0,
+            channels_json TEXT NOT NULL DEFAULT '[]',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (query_id, candidate_id, candidate_type),
+            FOREIGN KEY (query_id) REFERENCES query_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_artifact_embeddings_artifact
+        ON artifact_embeddings(artifact_id);
+        CREATE INDEX IF NOT EXISTS idx_artifact_embeddings_source_model
+        ON artifact_embeddings(source_id, embedding_model);
+        CREATE INDEX IF NOT EXISTS idx_artifact_embeddings_model_type
+        ON artifact_embeddings(embedding_model, representation_type);
+        CREATE INDEX IF NOT EXISTS idx_knowledge_map_entries_map
+        ON knowledge_map_entries(map_id);
+        CREATE INDEX IF NOT EXISTS idx_knowledge_map_entries_artifact
+        ON knowledge_map_entries(artifact_id);
+        CREATE INDEX IF NOT EXISTS idx_knowledge_map_entries_page
+        ON knowledge_map_entries(page_id);
+        CREATE INDEX IF NOT EXISTS idx_query_candidates_query
+        ON query_candidates(query_id, rank);
+        """,
+    ),
 )
 
 

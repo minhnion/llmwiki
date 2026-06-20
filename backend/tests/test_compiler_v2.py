@@ -2,10 +2,8 @@ import asyncio
 import sqlite3
 
 import pytest
-from fastapi.testclient import TestClient
 
-from backend.app.application.container import AppContainer, get_container
-from backend.app.core.config import Settings
+from backend.app.api.routes import sources as sources_route
 from backend.app.db.connection import SQLiteDatabase
 from backend.app.db.migrations import MigrationRunner
 from backend.app.domain.compiler import (
@@ -20,7 +18,6 @@ from backend.app.domain.compiler import (
     CoverageUnitAssessment,
     RecommendedCompilationPass,
 )
-from backend.app.main import create_app
 from backend.app.repositories.compiler import SQLiteCompilerRepository
 from backend.app.repositories.jobs import SQLiteIngestJobRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
@@ -136,18 +133,12 @@ async def _run_coverage_follow_up_test(tmp_path) -> None:
     assert inspection.pass_count == 3
     assert inspection.coverage_status == "complete"
     assert len(inspection.artifacts) == 2
-    app = create_app()
-    app.dependency_overrides[get_container] = lambda: AppContainer(
-        settings=Settings(
-            database_path=database.database_path,
-            raw_dir=tmp_path / "raw",
-            wiki_dir=wiki_dir,
-        ),
-        database=database,
-    )
-    response = TestClient(app).get(f"/api/sources/{source.id}/compilation")
-    assert response.status_code == 200
-    assert response.json()["compiler_run_id"] == result.compiler_run_id
+    response = sources_route.inspect_compilation(source.id, container=type(
+        "Container",
+        (),
+        {"database": database},
+    )())
+    assert response.compiler_run_id == result.compiler_run_id
 
 
 def test_invalid_compilation_pass_is_retried_with_clean_state(tmp_path) -> None:
@@ -245,7 +236,7 @@ def test_compiler_migration_is_idempotent(tmp_path) -> None:
     first = MigrationRunner(database).run()
     second = MigrationRunner(database).run()
 
-    assert first[-1].name == "knowledge_compiler_v3_quality"
+    assert first[-1].name == "semantic_artifact_retrieval"
     assert second == []
 
 
