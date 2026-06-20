@@ -155,13 +155,18 @@ Metadata tối thiểu:
   "source_type": "odt",
   "language": "vi",
   "status": "compiled",
-  "compiler_version": "knowledge-compiler-v3-quality",
+  "compiler_version": "knowledge-compiler-v6-source-ledger",
   "created_at": "...",
   "ingested_at": "..."
 }
 ```
 
 Không sửa raw source sau upload. Re-ingest tạo source version hoặc compiler run mới.
+
+Với nguồn có text dễ trích xuất, hệ thống có thể cung cấp thêm một `SOURCE_TEXT_CONTEXT_JSON`
+cho LLM/VLM như bản đọc phụ trợ trong profiling/compilation/audit. Context này không phải
+chunk RAG, không được embed hoặc retrieve như corpus chính và không chứa domain rule; nó chỉ
+giúp model không bỏ sót chi tiết khi file input là định dạng văn phòng hoặc văn bản dài.
 
 ### 4.2 Source Manifest
 
@@ -1032,22 +1037,39 @@ Outcome:
 - Graph và wiki nhất quán ngay sau ingest.
 - Không còn manual graph step trong normal flow.
 
-### Stage 2: Knowledge Compiler V2/V3 Quality
+### Stage 2: Knowledge Compiler V5 Deep Compile
 
 - Thêm SourceManifest.
+- Thêm observed detail inventory do LLM/VLM sinh.
+- Cho compiler sinh `discovered_details` khi raw source có factual detail bị manifest bỏ sót.
 - Thêm dynamic compilation plan.
-- Thêm multi-pass compiler.
+- Thêm primary deep full-source compiler.
 - Thêm open Artifact Store.
 - Thêm Artifact Matcher/Wiki Integrator.
-- Thêm Coverage Auditor và follow-up pass.
-- Thêm hardening pass toàn nguồn theo contract mở để giảm compilation loss mà không dựa vào
-  keyword, regex hoặc taxonomy domain cố định.
+- Thêm detail-aware Coverage Auditor và selective repair pass.
+- Loại bỏ hardening pass toàn nguồn mặc định; chỉ repair khi audit/gate xác nhận gap,
+  không dựa vào keyword, regex hoặc taxonomy domain cố định.
 
 Outcome:
 
 - Source không còn bị nén thành vài evidence/claim tùy ý.
 - Artifacts phản ánh cấu trúc và knowledge lenses do model suy luận.
 - Ingest có báo cáo coverage và trạng thái `needs_review`.
+
+### Stage 2.5: Knowledge Compiler V6 Source Ledger
+
+- Thêm `ledger_items` bắt buộc cho từng target source unit trong compilation pass.
+- Mỗi ledger item phải có `detail_coverage`, kể cả khi đang `missing`, `weak` hoặc
+  `ambiguous`.
+- Coverage auditor có thể khai báo `additional_details` khi phát hiện source detail chưa
+  có trong manifest/ledger/discovered details.
+- Ingest promote `additional_details` vào ledger để repair pass có target cụ thể.
+
+Outcome:
+
+- Chi tiết nguồn không còn được phép biến mất im lặng giữa source unit và artifact store.
+- Coverage gap có thể target đúng source detail thiếu thay vì chỉ target cả unit chung chung.
+- Vẫn không dùng keyword, regex, taxonomy domain hoặc raw chunk retrieval corpus.
 
 ### Stage 3: Semantic retrieval và compounding loop
 
@@ -1104,11 +1126,13 @@ tài liệu, không quay về raw-chunk RAG và vẫn giữ raw source làm nề
 
 ## 16. Trạng thái triển khai
 
-Knowledge Compiler V3 quality foundation đã được triển khai với source manifest, dynamic
-multi-pass compilation, open artifacts, evidence local IDs, provenance validation, pass
-retry, hardening pass, per-unit coverage audit, follow-up compilation và graph tự động
-trong ingest.
+Knowledge Compiler V6 source ledger foundation đã được triển khai với source manifest,
+observed details, source-unit ledger items, discovered/additional details, dynamic semantic
+unit compilation, open artifacts, evidence local IDs, provenance validation, retry chỉ cho
+lỗi validation/provenance, ledger-aware coverage audit, selective repair pass và graph tự
+động trong ingest.
 
-Embedding được giữ cho semantic retrieval phase tiếp theo. Phase hiện tại đã tạo Artifact
-Store và artifact FTS trong SQLite để có thể thêm vector index mà không thay đổi compiler IR.
+Semantic Artifact Retrieval cũng đã được triển khai: artifact embeddings lưu trong SQLite,
+knowledge map, artifact/wiki FTS, LLM navigation, graph expansion và LLM reranking chạy trên
+compiled artifacts thay vì raw chunks.
 Chi tiết nằm tại `docs/knowledge-compiler-v2-implementation.md`.

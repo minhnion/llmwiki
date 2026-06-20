@@ -96,6 +96,7 @@ async def _run_ingest_source_test(tmp_path) -> None:
     result = await service.ingest(source.id)
 
     assert result.source.status == "ingested"
+    assert result.pass_count == 1
     assert result.coverage.coverage_status == "complete"
     assert result.graph.status == "completed"
     assert result.graph.relation_count == 3
@@ -157,7 +158,7 @@ async def _run_ingest_source_test(tmp_path) -> None:
         "review_items": 0,
         "wiki_pages": 5,
         "compiler_runs": 1,
-        "compiler_passes": 2,
+        "compiler_passes": 1,
         "source_manifests": 1,
         "source_units": 3,
         "artifacts": 2,

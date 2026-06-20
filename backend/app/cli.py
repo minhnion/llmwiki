@@ -148,6 +148,9 @@ def main() -> None:
             model=container.settings.openai_model,
             max_output_tokens=container.settings.max_output_tokens,
             preferred_language=container.settings.preferred_language,
+            source_text_context_max_chars=(
+                container.settings.source_text_context_max_chars
+            ),
         )
         semantic_repository = SQLiteSemanticRepository(container.database)
         service = SourceIngestService(
@@ -203,6 +206,9 @@ def main() -> None:
             model=container.settings.openai_model,
             max_output_tokens=container.settings.max_output_tokens,
             preferred_language=container.settings.preferred_language,
+            source_text_context_max_chars=(
+                container.settings.source_text_context_max_chars
+            ),
         )
         result = asyncio.run(
             SemanticIndexer(

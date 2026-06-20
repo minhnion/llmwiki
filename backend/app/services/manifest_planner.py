@@ -32,6 +32,7 @@ class ManifestPlanner:
                 self._fallback_pass(
                     "pass_budget_consolidated_units",
                     remaining_units,
+                    self._details_for_units(manifest, remaining_units),
                 ),
             ]
 
@@ -60,6 +61,14 @@ class ManifestPlanner:
                         "target_unit_ids": list(
                             dict.fromkeys([*last.target_unit_ids, *uncovered])
                         ),
+                        "target_detail_ids": list(
+                            dict.fromkeys(
+                                [
+                                    *last.target_detail_ids,
+                                    *self._details_for_units(manifest, uncovered),
+                                ]
+                            )
+                        ),
                     }
                 )
             else:
@@ -70,7 +79,11 @@ class ManifestPlanner:
                     for start in range(0, len(uncovered), group_size)
                 ]
                 plans.extend(
-                    self._fallback_pass(f"pass_uncovered_units_{index}", group)
+                    self._fallback_pass(
+                        f"pass_uncovered_units_{index}",
+                        group,
+                        self._details_for_units(manifest, group),
+                    )
                     for index, group in enumerate(groups, start=1)
                 )
 
@@ -90,18 +103,34 @@ class ManifestPlanner:
         return normalized
 
     @staticmethod
-    def _fallback_pass(pass_id: str, target_unit_ids: list[str]) -> CompilationPassPlan:
+    def _fallback_pass(
+        pass_id: str,
+        target_unit_ids: list[str],
+        target_detail_ids: list[str],
+    ) -> CompilationPassPlan:
         return CompilationPassPlan(
             pass_id=pass_id,
             objective=(
                 "Biên dịch đầy đủ các semantic source units mà source profiler đã nhận diện "
-                "nhưng chưa đưa vào compilation plan. Giữ mọi factual detail, quan hệ ngữ nghĩa "
-                "và provenance quan trọng theo chính ngữ cảnh của từng unit."
+                "nhưng chưa đưa vào compilation plan. Giữ mọi source detail, factual detail, "
+                "quan hệ ngữ nghĩa và provenance quan trọng theo chính ngữ cảnh của từng unit."
             ),
             target_unit_ids=target_unit_ids,
+            target_detail_ids=target_detail_ids,
             expected_outputs=[
+                "source unit ledger items for independently queryable factual details",
                 "grounded evidence for every target unit",
                 "source-backed artifacts with atomic statements",
+                "detail coverage for source ledger details",
                 "semantic nodes and artifact relations when present",
             ],
         )
+
+    @staticmethod
+    def _details_for_units(manifest: SourceManifest, unit_ids: list[str]) -> list[str]:
+        target_units = set(unit_ids)
+        return [
+            detail.local_id
+            for detail in manifest.observed_details
+            if detail.source_unit_id in target_units
+        ]

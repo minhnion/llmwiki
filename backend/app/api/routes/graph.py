@@ -31,6 +31,7 @@ def build_graph_builder(container: AppContainer) -> GraphBuilder:
         model=container.settings.openai_model,
         max_output_tokens=container.settings.max_output_tokens,
         preferred_language=container.settings.preferred_language,
+        source_text_context_max_chars=container.settings.source_text_context_max_chars,
     )
     return GraphBuilder(
         repository=SQLiteGraphRepository(container.database),

@@ -6,7 +6,11 @@ from backend.app.core.ids import compiler_pass_run_id, compiler_run_id, ingest_j
 from backend.app.domain.compiler import (
     CompilationBundle,
     CompilationPassPlan,
+    CompilationPassResult,
+    CompiledDetailCoverage,
+    CoverageGap,
     CoverageReport,
+    ObservedDetail,
     SourceManifest,
     WikiIntegrationPlan,
     WikiPagePlan,
@@ -65,8 +69,8 @@ class SourceIngestService:
         compiler_version: str,
         prompt_version: str,
         schema_version: str,
-        max_passes: int = 16,
-        max_pass_retries: int = 2,
+        max_passes: int = 4,
+        max_pass_retries: int = 1,
         max_audit_iterations: int = 2,
         merger: CompilationMerger | None = None,
         validator: CompilationValidator | None = None,
@@ -90,6 +94,8 @@ class SourceIngestService:
         self.compiler_version = compiler_version
         self.prompt_version = prompt_version
         self.schema_version = schema_version
+        if max_passes < 1:
+            raise ValueError("Compiler max_passes must be at least 1.")
         self.max_passes = max_passes
         self.max_pass_retries = max_pass_retries
         self.max_audit_iterations = max_audit_iterations
@@ -126,7 +132,7 @@ class SourceIngestService:
         try:
             manifest = self.manifest_planner.ensure_complete_plan(
                 await self.llm_client.profile_source(source),
-                max_passes=self.max_passes,
+                max_passes=self._initial_plan_budget(),
             )
             self.compiler_repository.save_manifest(
                 run_id,
@@ -142,7 +148,7 @@ class SourceIngestService:
             )
             compilation = self.merger.empty()
             executed_passes = 0
-            for plan in manifest.compilation_plan:
+            for plan in self._initial_compilation_plans(manifest):
                 if executed_passes >= self.max_passes:
                     break
                 compilation = await self._execute_pass(
@@ -150,18 +156,6 @@ class SourceIngestService:
                     run_id,
                     manifest,
                     plan,
-                    compilation,
-                    iteration=0,
-                )
-                executed_passes += 1
-            if executed_passes == 0:
-                raise ValueError("Source manifest did not provide a compilation plan.")
-            if executed_passes < self.max_passes:
-                compilation = await self._execute_pass(
-                    source,
-                    run_id,
-                    manifest,
-                    self._hardening_plan(manifest),
                     compilation,
                     iteration=0,
                 )
@@ -317,8 +311,20 @@ class SourceIngestService:
                     current_plan,
                     compilation,
                 )
+                result = self._normalize_pass_result(
+                    manifest,
+                    current_plan,
+                    compilation,
+                    result,
+                )
                 merged = self.merger.merge(compilation, result)
-                self.validator.validate_pass(manifest, current_plan, result, merged)
+                self.validator.validate_pass(
+                    manifest,
+                    current_plan,
+                    result,
+                    merged,
+                    require_target_coverage=False,
+                )
                 self.compiler_repository.finish_pass(
                     pass_run_id,
                     result,
@@ -337,7 +343,10 @@ class SourceIngestService:
                         "objective": (
                             f"{plan.objective}\n\nLần trước không đạt validation gate: "
                             f"{exc}. Hãy sửa toàn bộ lỗi provenance/reference này; mọi "
-                            "artifact và statement phải có evidence_local_ids hợp lệ."
+                            "artifact và statement phải có evidence_local_ids hợp lệ. "
+                            "Mọi ledger_items và target_detail_ids phải có detail_coverage; "
+                            "nếu chưa thể biên dịch đủ, trả detail_coverage status `missing`, "
+                            "`weak` hoặc `ambiguous` thay vì bỏ trống."
                         )
                     }
                 )
@@ -365,6 +374,7 @@ class SourceIngestService:
             compilation,
             iteration=0,
         )
+        compilation = self._promote_audit_details(compilation, report)
         report = self.coverage_gate.reconcile(
             manifest,
             compilation,
@@ -381,24 +391,31 @@ class SourceIngestService:
         for iteration in range(1, self.max_audit_iterations):
             if report.coverage_status == "complete" or not report.missing_or_weak_areas:
                 break
-            for gap in report.missing_or_weak_areas:
-                if executed_passes >= self.max_passes:
-                    break
-                compilation = await self._execute_pass(
-                    source,
-                    run_id,
-                    manifest,
-                    gap.recommended_pass.as_plan(),
-                    compilation,
-                    iteration,
-                )
-                executed_passes += 1
+            if executed_passes >= self.max_passes:
+                break
+            repair_plan = self._repair_plan_from_gaps(
+                manifest,
+                report.missing_or_weak_areas,
+                iteration,
+            )
+            if repair_plan is None:
+                break
+            compilation = await self._execute_pass(
+                source,
+                run_id,
+                manifest,
+                repair_plan,
+                compilation,
+                iteration,
+            )
+            executed_passes += 1
             report = await self.llm_client.audit_compilation(
                 source,
                 manifest,
                 compilation,
                 iteration=iteration,
             )
+            compilation = self._promote_audit_details(compilation, report)
             report = self.coverage_gate.reconcile(
                 manifest,
                 compilation,
@@ -458,22 +475,267 @@ class SourceIngestService:
         )
 
     @staticmethod
-    def _hardening_plan(manifest: SourceManifest) -> CompilationPassPlan:
+    def _primary_compilation_plan(manifest: SourceManifest) -> CompilationPassPlan:
         return CompilationPassPlan(
-            pass_id="coverage_hardening_all_units",
+            pass_id="primary_full_source_compile",
             objective=(
-                "Đọc lại toàn bộ source sau các compilation pass ban đầu để tìm compilation "
-                "loss bằng chính ngữ cảnh của tài liệu. Bổ sung mọi tri thức quan trọng bị "
-                "sót khỏi evidence hoặc atomic statements, enrich artifact hiện có bằng cùng "
-                "local_id khi phù hợp, và giữ nội dung có thể kiểm chứng thay vì tóm tắt "
-                "chung chung. Không dựa vào keyword, regex hoặc taxonomy domain cố định."
+                "Deep-compile toàn bộ source thành knowledge wiki IR. Dùng manifest như bản "
+                "đồ điều hướng, nhưng không giới hạn ở observed detail inventory: nếu raw "
+                "source có factual detail độc lập mà manifest bỏ sót, hãy khai báo trong "
+                "discovered_details và biên dịch thành evidence, artifact, atomic statement "
+                "và detail_coverage. Không dựa vào keyword, regex, fixed chunk hay taxonomy "
+                "domain cố định."
             ),
             target_unit_ids=[unit.local_id for unit in manifest.content_units],
+            target_detail_ids=[
+                detail.local_id for detail in manifest.observed_details
+            ],
             expected_outputs=[
-                "missing source-backed evidence",
-                "atomic statements for source-grounded factual details",
-                "open semantic nodes and relations when the source supports them",
-                "artifact enrichments or new artifacts with stable local IDs",
+                "source unit ledger items for independently queryable factual details",
+                "source-grounded evidence",
+                "open artifacts with source-backed content",
+                "atomic statements for factual details",
+                "discovered details for source facts omitted by the manifest",
+                "detail coverage mapped to evidence/artifact/statement refs",
+                "semantic nodes and artifact relations when present",
                 "review items for unresolved ambiguity or low-confidence merges",
             ],
         )
+
+    def _initial_plan_budget(self) -> int:
+        if self.max_passes <= 1 or self.max_audit_iterations <= 1:
+            return self.max_passes
+        return self.max_passes - 1
+
+    def _initial_compilation_plans(
+        self,
+        manifest: SourceManifest,
+    ) -> list[CompilationPassPlan]:
+        plans = manifest.compilation_plan or [self._primary_compilation_plan(manifest)]
+        return [self._strengthen_initial_plan(plan) for plan in plans]
+
+    @staticmethod
+    def _promote_audit_details(
+        compilation: CompilationBundle,
+        report: CoverageReport,
+    ) -> CompilationBundle:
+        if not report.additional_details:
+            return compilation
+        merged = {detail.local_id: detail for detail in compilation.ledger_items}
+        merged.update({detail.local_id: detail for detail in report.additional_details})
+        return compilation.model_copy(
+            update={
+                "ledger_items": [merged[key] for key in sorted(merged)],
+            }
+        )
+
+    @staticmethod
+    def _normalize_pass_result(
+        manifest: SourceManifest,
+        plan: CompilationPassPlan,
+        existing: CompilationBundle,
+        result: CompilationPassResult,
+    ) -> CompilationPassResult:
+        unit_by_id = {unit.local_id: unit for unit in manifest.content_units}
+        known_details = {
+            detail.local_id: detail
+            for detail in [
+                *manifest.observed_details,
+                *existing.ledger_items,
+                *existing.discovered_details,
+                *result.ledger_items,
+                *result.discovered_details,
+            ]
+        }
+        ledger_by_id = {item.local_id: item for item in result.ledger_items}
+        for detail_id in plan.target_detail_ids:
+            detail = known_details.get(detail_id)
+            if detail is not None and detail_id not in ledger_by_id:
+                ledger_by_id[detail_id] = detail
+        ledger_units = {
+            item.source_unit_id
+            for item in ledger_by_id.values()
+            if item.source_unit_id in set(plan.target_unit_ids)
+        }
+        for unit_id in plan.target_unit_ids:
+            if unit_id in ledger_units:
+                continue
+            carried_details = [
+                detail
+                for detail in known_details.values()
+                if detail.source_unit_id == unit_id
+            ]
+            if carried_details:
+                for detail in carried_details:
+                    ledger_by_id.setdefault(detail.local_id, detail)
+                continue
+            unit = unit_by_id.get(unit_id)
+            if unit is None:
+                continue
+            ledger_by_id[f"ledger_{unit_id}"] = ObservedDetail(
+                local_id=f"ledger_{unit_id}",
+                source_unit_id=unit_id,
+                detail_kind="source_unit_coverage_obligation",
+                description=(
+                    "Source unit still requires semantic compilation: "
+                    f"{unit.summary or unit.label}"
+                ),
+                locator=unit.locator,
+                importance=unit.importance,
+                query_hint=unit.summary or unit.label,
+            )
+        normalized_ledger = [ledger_by_id[key] for key in sorted(ledger_by_id)]
+        detail_ids = {
+            detail.local_id
+            for detail in [
+                *manifest.observed_details,
+                *existing.ledger_items,
+                *existing.discovered_details,
+                *normalized_ledger,
+                *result.discovered_details,
+            ]
+        }
+        required_detail_ids = [
+            *[item.local_id for item in normalized_ledger],
+            *[detail_id for detail_id in plan.target_detail_ids if detail_id in detail_ids],
+        ]
+        required_detail_ids = list(dict.fromkeys(required_detail_ids))
+        covered_detail_ids = {item.detail_id for item in result.detail_coverage}
+        missing_coverage = [
+            detail_id
+            for detail_id in required_detail_ids
+            if detail_id not in covered_detail_ids
+        ]
+        if not missing_coverage and normalized_ledger == result.ledger_items:
+            return result
+        normalized_coverage = [
+            *result.detail_coverage,
+            *[
+                CompiledDetailCoverage(
+                    detail_id=detail_id,
+                    status="missing",
+                    evidence_local_ids=[],
+                    artifact_local_ids=[],
+                    statement_refs=[],
+                    notes=(
+                        "Compiler pass omitted detail_coverage for this source detail; "
+                        "normalized as missing so coverage audit and repair can target it."
+                    ),
+                    confidence=0.0,
+                )
+                for detail_id in missing_coverage
+            ],
+        ]
+        notes = [
+            *result.notes,
+        ]
+        if normalized_ledger != result.ledger_items:
+            notes.append(
+                "Normalized pass ledger from manifest/existing source details for "
+                "target units/details that the compiler pass omitted."
+            )
+        if missing_coverage:
+            notes.append(
+                "Normalized missing detail_coverage entries for source detail IDs: "
+                + ", ".join(missing_coverage)
+            )
+        return result.model_copy(
+            update={
+                "ledger_items": normalized_ledger,
+                "detail_coverage": normalized_coverage,
+                "notes": list(dict.fromkeys(notes)),
+            }
+        )
+
+    @staticmethod
+    def _strengthen_initial_plan(plan: CompilationPassPlan) -> CompilationPassPlan:
+        expected_outputs = list(
+            dict.fromkeys(
+                [
+                    *plan.expected_outputs,
+                    "source unit ledger items for every independently queryable factual detail",
+                    "source-close evidence for every target unit",
+                    "atomic statements for each independently queryable factual detail",
+                    "discovered details for source facts omitted by the manifest",
+                    "detail coverage mapped to evidence/artifact/statement refs",
+                ]
+            )
+        )
+        return plan.model_copy(
+            update={
+                "objective": (
+                    f"{plan.objective}\n\n"
+                    "Deep-compile the targeted semantic source units as durable wiki "
+                    "knowledge. First create ledger_items for every independently "
+                    "queryable/checkable factual detail in each target unit. Keep "
+                    "source-specific conditions, scopes, exceptions, formulas, "
+                    "procedures, consequences, rights and obligations when they are "
+                    "present in the target units; do not collapse the pass into a broad "
+                    "summary. If the source contains factual details not listed in "
+                    "observed_details, add them as ledger_items and discovered_details "
+                    "and compile them with provenance."
+                ),
+                "expected_outputs": expected_outputs,
+            }
+        )
+
+    @staticmethod
+    def _repair_plan_from_gaps(
+        manifest: SourceManifest,
+        gaps: list[CoverageGap],
+        iteration: int,
+    ) -> CompilationPassPlan | None:
+        if not gaps:
+            return None
+        unit_order = [unit.local_id for unit in manifest.content_units]
+        detail_order = [detail.local_id for detail in manifest.observed_details]
+        target_units = {
+            unit_id
+            for gap in gaps
+            for unit_id in gap.recommended_pass.target_unit_ids
+        }
+        target_details = {
+            detail_id
+            for gap in gaps
+            for detail_id in gap.recommended_pass.target_detail_ids
+        }
+        if not target_units:
+            return None
+        descriptions = [gap.description for gap in gaps]
+        expected_outputs = [
+            output
+            for gap in gaps
+            for output in gap.recommended_pass.expected_outputs
+        ]
+        expected_outputs = list(
+            dict.fromkeys(
+                [
+                    *expected_outputs,
+                    "grounded evidence for missing or weak areas",
+                    "source unit ledger items for recovered source details",
+                    "discovered details for source facts omitted by the manifest",
+                    "artifact additions or enrichments",
+                    "atomic statements for recovered details",
+                    "detail coverage with evidence/artifact/statement refs",
+                    "review items for unresolved ambiguity",
+                ]
+            )
+        )
+        return CompilationPassPlan(
+            pass_id=f"selective_repair_{iteration}",
+            objective=(
+                "Thực hiện một repair pass chọn lọc cho các coverage gap đã được audit/gate "
+                "xác nhận. Không biên dịch lại mọi thứ nếu existing_compilation đã đủ; chỉ "
+                "bổ sung hoặc enrich phần thiếu/yếu, giữ local_id hiện có khi cùng semantic "
+                "identity.\n\nCoverage gaps:\n- "
+                + "\n- ".join(descriptions)
+            ),
+            target_unit_ids=_ordered(target_units, unit_order),
+            target_detail_ids=_ordered(target_details, detail_order),
+            expected_outputs=expected_outputs,
+        )
+
+
+def _ordered(values: set[str], order: list[str]) -> list[str]:
+    order_index = {value: index for index, value in enumerate(order)}
+    return sorted(values, key=lambda value: order_index.get(value, len(order)))

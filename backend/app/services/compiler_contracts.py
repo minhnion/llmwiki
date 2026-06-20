@@ -13,7 +13,7 @@ from backend.app.domain.models import SourceRef
 
 class CompilerLLMClient(Protocol):
     async def profile_source(self, source: SourceRef) -> SourceManifest:
-        """Read a source and produce a semantic manifest and dynamic pass plan."""
+        """Read a source and produce a manifest, detail inventory, and dynamic plan."""
 
     async def compile_source_pass(
         self,
@@ -22,7 +22,7 @@ class CompilerLLMClient(Protocol):
         plan: CompilationPassPlan,
         existing: CompilationBundle,
     ) -> CompilationPassResult:
-        """Compile one model-planned knowledge pass with source-local provenance."""
+        """Compile one knowledge pass with source-local provenance and detail coverage."""
 
     async def audit_compilation(
         self,
@@ -31,7 +31,7 @@ class CompilerLLMClient(Protocol):
         compilation: CompilationBundle,
         iteration: int,
     ) -> CoverageReport:
-        """Compare compiled knowledge with the source and identify material gaps."""
+        """Compare compiled knowledge/detail coverage with the source and identify gaps."""
 
     async def plan_wiki_integration(
         self,

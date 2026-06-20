@@ -49,6 +49,7 @@ from backend.app.domain.query import (
     QueryPlan,
     QuerySynthesisResult,
 )
+from backend.app.services.source_text import extract_source_text_context
 
 
 @dataclass(frozen=True)
@@ -83,11 +84,13 @@ class OpenAIResponsesClient:
         model: str,
         max_output_tokens: int = 6000,
         preferred_language: str = "vi",
+        source_text_context_max_chars: int = 120_000,
     ) -> None:
         self.api_key = api_key
         self.model = model
         self.max_output_tokens = max_output_tokens
         self.preferred_language = preferred_language
+        self.source_text_context_max_chars = source_text_context_max_chars
         self.client = OpenAI(api_key=api_key)
 
     async def create_response(self, request: LLMRequest) -> LLMResponse:
@@ -140,7 +143,13 @@ class OpenAIResponsesClient:
             name="llm_wiki_source_manifest_v2",
             schema=SOURCE_MANIFEST_JSON_SCHEMA,
             instructions=_source_profile_instructions(self.preferred_language),
-            inputs=[_file_input(source, _source_profile_prompt(source))],
+            inputs=[
+                _file_input(
+                    source,
+                    _source_profile_prompt(source),
+                    self.source_text_context_max_chars,
+                )
+            ],
         )
         manifest = SourceManifest.model_validate(payload)
         if manifest.source_id != source.id:
@@ -170,6 +179,7 @@ class OpenAIResponsesClient:
                         },
                         ensure_ascii=False,
                     ),
+                    self.source_text_context_max_chars,
                 )
             ],
         )
@@ -201,6 +211,7 @@ class OpenAIResponsesClient:
                         },
                         ensure_ascii=False,
                     ),
+                    self.source_text_context_max_chars,
                 )
             ],
         )
@@ -508,7 +519,16 @@ def _base64_file_data(path: Path, mime_type: str | None) -> str:
     return f"data:{guessed_mime};base64,{encoded}"
 
 
-def _file_input(source: SourceRef, prompt: str) -> dict[str, object]:
+def _file_input(
+    source: SourceRef,
+    prompt: str,
+    source_text_context_max_chars: int = 120_000,
+) -> dict[str, object]:
+    text_prompt = _prompt_with_source_text_context(
+        source,
+        prompt,
+        source_text_context_max_chars,
+    )
     return {
         "role": "user",
         "content": [
@@ -517,9 +537,38 @@ def _file_input(source: SourceRef, prompt: str) -> dict[str, object]:
                 "filename": source.path.name,
                 "file_data": _base64_file_data(source.path, source.mime_type),
             },
-            {"type": "input_text", "text": prompt},
+            {"type": "input_text", "text": text_prompt},
         ],
     }
+
+
+def _prompt_with_source_text_context(
+    source: SourceRef,
+    prompt: str,
+    max_chars: int,
+) -> str:
+    context = extract_source_text_context(source.path, source.source_type, max_chars)
+    if context is None:
+        return prompt
+    payload = {
+        "purpose": (
+            "Best-effort faithful text view extracted from the same immutable raw source. "
+            "Use it only as an additional reading aid for profiling, compilation and audit; "
+            "it is not a retrieval corpus, not a chunk index and not a domain rule."
+        ),
+        "locator_policy": (
+            "P0001-style markers are generic text-context locators. Preserve source meaning "
+            "and cite the best raw-source locator available in generated evidence."
+        ),
+        "char_count": context.char_count,
+        "truncated": context.truncated,
+        "text": context.text,
+    }
+    return (
+        f"{prompt}\n\n"
+        "SOURCE_TEXT_CONTEXT_JSON:\n"
+        f"{json.dumps(payload, ensure_ascii=False)}"
+    )
 
 
 def _source_profile_instructions(preferred_language: str) -> str:
@@ -529,15 +578,26 @@ def _source_profile_instructions(preferred_language: str) -> str:
         "fixed chunk hay template tài liệu có sẵn. Tạo content_units làm đơn vị điều hướng "
         "semantic, mỗi unit có local_id duy nhất dạng ổn định như `unit_1`, `unit_2` "
         "hoặc `unit_topic`; không dùng số trần như `1`. Locator phải kiểm tra được. "
-        "Đề xuất knowledge "
+        "Trong mỗi content unit, tạo observed_details cho các chi tiết có thể được hỏi lại "
+        "hoặc cần được giữ dưới dạng evidence/artifact/statement sau này. detail_kind là open "
+        "string do nguồn quyết định; query_hint là mô tả semantic mềm, không phải keyword route. "
+        "Không biến observed_details thành chunk thô: mỗi detail phải là một ý nghĩa có thể "
+        "kiểm chứng, có locator và source_unit_id. Đừng nén một source unit thành một detail "
+        "tóm tắt nếu trong đó có nhiều factual units độc lập; hãy để các điều kiện, phạm vi, "
+        "cách tính, thủ tục, ngoại lệ, hệ quả, quyền, nghĩa vụ hoặc quan hệ riêng biệt thành "
+        "các observed_details riêng khi chúng có thể được hỏi/cite độc lập. Đề xuất knowledge "
         "lenses và một dynamic compilation plan đủ bao phủ các unit quan trọng. Content unit "
         "phải đủ hẹp để kiểm tra coverage độc lập; không gộp các nội dung có chức năng tri "
         "thức khác nhau chỉ vì chúng nằm gần nhau trong file. Mỗi pass phải "
-        "có mục tiêu khác biệt và target_unit_ids chỉ được tham chiếu unit đã khai báo. "
+        "có mục tiêu khác biệt; target_unit_ids và target_detail_ids chỉ được tham chiếu ID "
+        "đã khai báo. "
         "Hợp của target_unit_ids từ toàn bộ compilation_plan bắt buộc bao phủ mọi content "
         "unit; không được để unit chỉ xuất hiện trong manifest mà không có pass xử lý. "
         "Không trích xuất artifacts ở bước profiling. Bắt buộc giữ ngôn ngữ nguồn cho language, "
         "labels, summaries, objectives và expected_outputs; nếu không xác định được thì dùng "
+        "Nếu input có SOURCE_TEXT_CONTEXT_JSON, dùng nó như bản đọc phụ trợ có locator đoạn "
+        "để tránh bỏ sót chi tiết trong tài liệu text-bearing; raw file vẫn là nguồn thẩm "
+        "quyền. "
         f"`{preferred_language}`. Chỉ trả JSON đúng schema."
     )
 
@@ -546,16 +606,21 @@ def _source_profile_prompt(source: SourceRef) -> str:
     return (
         f"Profile source `{source.id}` có tiêu đề `{source.title}`, loại "
         f"`{source.source_type}` và SHA-256 `{source.sha256}`. Lập manifest và kế hoạch "
-        "biên dịch động để các đơn vị tri thức quan trọng và quan hệ giữa chúng không bị bỏ sót."
+        "biên dịch động. Hãy tạo observed detail inventory để các chi tiết quan trọng có thể "
+        "được compiler/auditor kiểm tra coverage mà không cần keyword hay rule theo domain."
     )
 
 
 def _compilation_pass_instructions(preferred_language: str) -> str:
     return (
-        "Bạn là Knowledge Compiler V3 quality tổng quát. Thực hiện đúng pass_plan trên raw source, "
+        "Bạn là Knowledge Compiler V6 source-ledger tổng quát. Thực hiện đúng pass_plan "
+        "trên raw source, "
         "manifest và compiled knowledge hiện có. Không dùng fixed chunks hoặc taxonomy domain. "
         "Evidence phải bám sát nguồn, có local_id source-scoped duy nhất và locator kiểm tra "
-        "được. Artifact type và relation type là open strings do nội dung quyết định. "
+        "được. Evidence.content phải đủ gần nguồn để một câu trả lời sau này có thể cite trực "
+        "tiếp; không thay evidence bằng nhan đề section hoặc paraphrase quá ngắn làm mất điều "
+        "kiện, phạm vi, ngoại lệ, công thức hoặc hệ quả trong chính câu nguồn. Artifact type "
+        "và relation type là open strings do nội dung quyết định. "
         "Mỗi evidence phải chỉ rõ source_unit_ids mà nó trực tiếp hỗ trợ. Mỗi source-backed "
         "artifact phải có evidence_local_ids và source_unit_ids. Mỗi artifact phải có atomic "
         "statements đủ nhỏ để kiểm chứng từng factual detail và quan hệ ngữ nghĩa mà source hỗ "
@@ -564,12 +629,29 @@ def _compilation_pass_instructions(preferred_language: str) -> str:
         "object_type, qualifiers, evidence_local_ids và source_unit_ids. Mọi chi tiết có thể "
         "kiểm chứng được nhắc trong artifact.content phải xuất hiện trong atomic statement và "
         "trong evidence được statement trích dẫn. "
+        "Trước khi viết artifact, bắt buộc tạo `ledger_items` cho từng target source unit: "
+        "đó là inventory các factual details/obligations độc lập mà một người có thể hỏi lại "
+        "hoặc cần cite riêng từ chính target unit. Ledger không phải chunk và không phải "
+        "taxonomy; mỗi item là một ý nghĩa kiểm chứng được, có source_unit_id, locator, "
+        "description và query_hint. Không được để một target unit không có ledger_items. "
+        "Nếu pass_plan có target_detail_ids, đưa từng target detail vào ledger hoặc ít nhất "
+        "xử lý rõ trong detail_coverage. Không được giới hạn vào observed_details của manifest: "
+        "nếu raw source có factual detail độc lập mà manifest bỏ sót, hãy thêm vào ledger_items "
+        "và discovered_details với local_id source-scoped ổn định; sau đó tạo evidence/artifact/"
+        "statement và detail_coverage cho detail đó. Với mọi ledger item, bắt buộc có một "
+        "detail_coverage entry: dùng `covered` chỉ khi có evidence_local_ids, artifact_local_ids "
+        "và statement_refs hợp lệ; nếu chưa biên dịch đủ thì dùng `weak`, `missing` hoặc "
+        "`ambiguous` và nêu rõ trong notes. detail_coverage không phải taxonomy đóng: nó chỉ "
+        "là map provenance từ source detail sang knowledge representation đã biên dịch. "
         "Tạo semantic_nodes riêng cho thực thể, khái niệm hoặc đơn vị tri thức thực sự xuất hiện "
         "trong nguồn; tuyệt đối không biến tiêu đề artifact thành semantic node chỉ vì artifact "
         "tồn tại. Các subject/object lặp lại trong nhiều statement thường là semantic node hoặc "
         "alias cần khai báo, trừ khi có lý do rõ ràng để đưa vào review_items. "
         "Với mỗi target unit, phải biên dịch nội dung có chức năng tri thức riêng theo đúng ngữ "
-        "cảnh source; không được thay cả unit bằng một câu tóm tắt chung chung. Toàn bộ nội dung "
+        "cảnh source; không được thay cả unit bằng một câu tóm tắt chung chung. "
+        "Các artifact nên có granularity tự nhiên theo nhóm tri thức thực sự; tránh tạo một "
+        "artifact umbrella cho cả tài liệu dài nếu source chứa nhiều cụm tri thức có thể truy "
+        "vấn độc lập. Toàn bộ nội dung "
         "tự nhiên, gồm title, summary, content, statement, "
         "relation và review item, phải cùng ngôn ngữ với manifest.language; chỉ giữ nguyên tên "
         "riêng và thuật ngữ kỹ thuật cần thiết. "
@@ -579,6 +661,8 @@ def _compilation_pass_instructions(preferred_language: str) -> str:
         "một artifact hiện có, dùng lại local_id đó với bản đầy đủ hơn. Relations chỉ được "
         "tham chiếu artifact local IDs tồn tại trong output hiện tại hoặc compiled knowledge "
         "đã cung cấp và phải có evidence. Giữ ngôn ngữ nguồn; nếu không xác định được thì dùng "
+        "Nếu input có SOURCE_TEXT_CONTEXT_JSON, dùng nó để đối chiếu từng target unit/detail "
+        "và giữ lại chi tiết có thể được hỏi độc lập; không coi nó là chunk retrieval corpus. "
         f"`{preferred_language}`. Không bịa, đưa bất định vào review_items. Chỉ trả JSON."
     )
 
@@ -586,7 +670,8 @@ def _compilation_pass_instructions(preferred_language: str) -> str:
 def _coverage_audit_instructions(preferred_language: str) -> str:
     return (
         "Bạn là Coverage Auditor độc lập cho knowledge compiler. So sánh trực tiếp raw source "
-        "và source manifest với evidence, artifacts, statements và relations đã biên dịch. "
+        "và source manifest với ledger_items, evidence, artifacts, statements, relations và "
+        "detail_coverage đã biên dịch. "
         "Đánh giá coverage theo các knowledge units quan trọng, không theo số lượng artifact. "
         "Bắt buộc tạo đúng một unit_assessment cho từng content unit trong manifest. Với từng "
         "unit, đối chiếu trực tiếp raw source, liệt kê tri thức đã được biểu diễn và tri thức "
@@ -598,11 +683,26 @@ def _coverage_audit_instructions(preferred_language: str) -> str:
         "và compilation loss theo chính ngữ cảnh của tài liệu. Nếu chi tiết có thể kiểm chứng "
         "chỉ có trong prose artifact.content nhưng không có statement/evidence riêng, unit đó "
         "chưa complete. "
+        "Nếu manifest có observed_details hoặc compiled knowledge có ledger_items/"
+        "discovered_details, bắt buộc tạo đúng một detail_assessment cho từng source detail "
+        "đó. Detail chỉ "
+        "`covered` khi nó có evidence, artifact và atomic statement "
+        "thực sự đại diện cho nội dung detail; nếu source có chi tiết nhưng compiled knowledge "
+        "chỉ tóm tắt chung, đánh dấu `weak` hoặc `missing`. Các follow-up pass nên target "
+        "target_detail_ids cụ thể khi gap nằm ở source detail, nhưng không dùng keyword hay "
+        "domain rule cố định. Nếu trong raw source hoặc SOURCE_TEXT_CONTEXT_JSON có một factual "
+        "detail độc lập quan trọng chưa có trong manifest observed_details, ledger_items hoặc "
+        "discovered_details, hãy khai báo nó trong `additional_details` với local_id ổn định, "
+        "source_unit_id hợp lệ, locator, description và query_hint; đồng thời tạo gap/repair "
+        "target đúng additional detail đó. "
         "Chỉ trả complete "
         "khi mọi unit có status complete, missing_knowledge rỗng, không còn gap quan trọng và "
-        "không còn provenance issue. "
+        "mọi observed/ledger/discovered/additional detail đã covered, không còn provenance issue. "
         "Nếu incomplete hoặc needs_review, đề xuất các follow-up pass cụ thể với pass_id mới "
-        "và target_unit_ids hợp lệ. Không đề xuất lại nội dung đã đủ. Viết theo ngôn ngữ nguồn, "
+        "và target_unit_ids/target_detail_ids hợp lệ. Không đề xuất lại nội dung đã đủ. "
+        "Viết theo ngôn ngữ nguồn, "
+        "Nếu input có SOURCE_TEXT_CONTEXT_JSON, đối chiếu compiled knowledge với bản đọc phụ "
+        "trợ đó để phát hiện compilation loss; raw file vẫn là nguồn thẩm quyền. "
         f"mặc định `{preferred_language}`. Chỉ trả JSON đúng schema."
     )
 
@@ -622,6 +722,7 @@ def _wiki_integration_instructions(preferred_language: str) -> str:
 
 def _compact_compilation(bundle: CompilationBundle) -> dict[str, object]:
     return {
+        "ledger_items": [item.model_dump() for item in bundle.ledger_items],
         "evidence": [
             {
                 "local_id": item.local_id,
@@ -632,6 +733,7 @@ def _compact_compilation(bundle: CompilationBundle) -> dict[str, object]:
             }
             for item in bundle.evidence_items
         ],
+        "discovered_details": [item.model_dump() for item in bundle.discovered_details],
         "artifacts": [
             {
                 "local_id": item.local_id,
@@ -647,6 +749,7 @@ def _compact_compilation(bundle: CompilationBundle) -> dict[str, object]:
         ],
         "semantic_nodes": [item.model_dump() for item in bundle.semantic_nodes],
         "relations": [item.model_dump() for item in bundle.relations],
+        "detail_coverage": [item.model_dump() for item in bundle.detail_coverage],
         "covered_unit_ids": bundle.covered_unit_ids,
         "review_items": [item.model_dump() for item in bundle.review_items],
     }
@@ -654,10 +757,15 @@ def _compact_compilation(bundle: CompilationBundle) -> dict[str, object]:
 
 def _audit_compilation_payload(bundle: CompilationBundle) -> dict[str, object]:
     return {
+        "ledger_items": [item.model_dump() for item in bundle.ledger_items],
         "evidence": [item.model_dump() for item in bundle.evidence_items],
+        "discovered_details": [
+            item.model_dump() for item in bundle.discovered_details
+        ],
         "artifacts": [item.model_dump() for item in bundle.artifacts],
         "semantic_nodes": [item.model_dump() for item in bundle.semantic_nodes],
         "relations": [item.model_dump() for item in bundle.relations],
+        "detail_coverage": [item.model_dump() for item in bundle.detail_coverage],
         "covered_unit_ids": bundle.covered_unit_ids,
         "review_items": [item.model_dump() for item in bundle.review_items],
         "notes": bundle.notes,
@@ -740,7 +848,9 @@ def _artifact_ranking_instructions(
         f"Chọn tối đa {max_artifacts} artifact_id và tối đa {max_evidence} evidence_id thực "
         "sự hỗ trợ câu trả lời. Phân biệt direct, supporting, qualifying, conflicting, "
         "background và irrelevant. Nếu artifact chỉ liên quan chung hoặc không có evidence "
-        "cụ thể, không chọn evidence_id đó. Nếu không có artifact/evidence đủ trực tiếp, "
+        "cụ thể, không chọn evidence_id đó. Nếu một artifact rộng nhưng có statement/evidence "
+        "cụ thể trả lời trực tiếp câu hỏi, hãy chọn evidence đó; độ rộng của artifact không "
+        "phải lý do loại bằng chứng trực tiếp. Nếu không có artifact/evidence đủ trực tiếp, "
         "selected_artifact_ids và selected_evidence_ids phải rỗng; không chọn top candidate "
         "chỉ để luôn có kết quả. Không bịa artifact_id hoặc evidence_id. Nêu missing_knowledge "
         "khi compiled artifacts không đủ trả lời. "

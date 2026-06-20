@@ -5,17 +5,21 @@ from backend.app.domain.compiler import (
     CompilationPassPlan,
     CompilationPassResult,
     CompiledArtifact,
+    CompiledDetailCoverage,
     CompiledEvidence,
     CompiledRelation,
     CompiledSemanticNode,
+    CoverageDetailAssessment,
     CoverageReport,
     CoverageUnitAssessment,
     KnowledgeLens,
+    ObservedDetail,
     OpenMetadataItem,
     SourceLocator,
     SourceManifest,
     SourceProfile,
     SourceUnit,
+    StatementReference,
     WikiIntegrationPlan,
     WikiPagePlan,
 )
@@ -81,6 +85,35 @@ class FakeCompilerClient:
                     importance=0.8,
                 ),
             ],
+            observed_details=[
+                ObservedDetail(
+                    local_id="detail_wiki",
+                    source_unit_id="unit_wiki",
+                    detail_kind="architectural_property",
+                    description="LLM Wiki persists source-grounded knowledge artifacts.",
+                    locator=_locator("section", "concept"),
+                    importance=0.95,
+                    query_hint="persistent source-grounded knowledge artifacts",
+                ),
+                ObservedDetail(
+                    local_id="detail_rag",
+                    source_unit_id="unit_rag",
+                    detail_kind="retrieval_behavior",
+                    description="Traditional RAG retrieves raw chunks at query time.",
+                    locator=_locator("section", "concept"),
+                    importance=0.9,
+                    query_hint="query-time raw chunk retrieval",
+                ),
+                ObservedDetail(
+                    local_id="detail_caveat",
+                    source_unit_id="unit_caveat",
+                    detail_kind="qualification",
+                    description="This variant does not persist generated pages.",
+                    locator=_locator("section", "caveat"),
+                    importance=0.8,
+                    query_hint="persistence caveat for generated pages",
+                ),
+            ],
             candidate_knowledge_lenses=[
                 KnowledgeLens(
                     name="architecture comparison",
@@ -93,6 +126,11 @@ class FakeCompilerClient:
                     pass_id="pass_core",
                     objective="Compile core concepts and claims.",
                     target_unit_ids=["unit_wiki", "unit_rag", "unit_caveat"],
+                    target_detail_ids=[
+                        "detail_wiki",
+                        "detail_rag",
+                        "detail_caveat",
+                    ],
                     expected_outputs=["evidence", "concept artifacts", "relations"],
                 )
             ],
@@ -106,10 +144,11 @@ class FakeCompilerClient:
         existing: CompilationBundle,
     ) -> CompilationPassResult:
         self.compilation_calls.append(plan.pass_id)
-        if plan.pass_id != "pass_core":
+        if plan.pass_id not in {"pass_core", "primary_full_source_compile"}:
             return _follow_up_result(plan)
         return CompilationPassResult(
             pass_id=plan.pass_id,
+            ledger_items=list(manifest.observed_details),
             evidence_items=[
                 CompiledEvidence(
                     local_id="ev_wiki",
@@ -257,6 +296,50 @@ class FakeCompilerClient:
                     status="active",
                 )
             ],
+            detail_coverage=[
+                CompiledDetailCoverage(
+                    detail_id="detail_wiki",
+                    status="covered",
+                    evidence_local_ids=["ev_wiki"],
+                    artifact_local_ids=["art_wiki"],
+                    statement_refs=[
+                        StatementReference(
+                            artifact_local_id="art_wiki",
+                            statement_local_id="stmt_wiki_persists",
+                        )
+                    ],
+                    notes="Detail is represented by a direct statement.",
+                    confidence=0.92,
+                ),
+                CompiledDetailCoverage(
+                    detail_id="detail_rag",
+                    status="covered",
+                    evidence_local_ids=["ev_rag"],
+                    artifact_local_ids=["art_rag"],
+                    statement_refs=[
+                        StatementReference(
+                            artifact_local_id="art_rag",
+                            statement_local_id="stmt_rag_retrieves",
+                        )
+                    ],
+                    notes="Detail is represented by a direct statement.",
+                    confidence=0.9,
+                ),
+                CompiledDetailCoverage(
+                    detail_id="detail_caveat",
+                    status="covered",
+                    evidence_local_ids=["ev_caveat"],
+                    artifact_local_ids=["art_wiki"],
+                    statement_refs=[
+                        StatementReference(
+                            artifact_local_id="art_wiki",
+                            statement_local_id="stmt_wiki_caveat",
+                        )
+                    ],
+                    notes="Detail is represented by a qualifying statement.",
+                    confidence=0.82,
+                ),
+            ],
             review_items=[],
             covered_unit_ids=["unit_wiki", "unit_rag", "unit_caveat"],
             notes=[],
@@ -388,6 +471,56 @@ def _complete_coverage() -> CoverageReport:
             )
             for unit_id in ["unit_wiki", "unit_rag", "unit_caveat"]
         ],
+        detail_assessments=[
+            CoverageDetailAssessment(
+                detail_id="detail_wiki",
+                unit_id="unit_wiki",
+                status="covered",
+                represented_knowledge=["LLM Wiki persistence is represented."],
+                missing_knowledge=[],
+                evidence_local_ids=["ev_wiki"],
+                artifact_local_ids=["art_wiki"],
+                statement_refs=[
+                    StatementReference(
+                        artifact_local_id="art_wiki",
+                        statement_local_id="stmt_wiki_persists",
+                    )
+                ],
+                confidence=0.94,
+            ),
+            CoverageDetailAssessment(
+                detail_id="detail_rag",
+                unit_id="unit_rag",
+                status="covered",
+                represented_knowledge=["RAG retrieval behavior is represented."],
+                missing_knowledge=[],
+                evidence_local_ids=["ev_rag"],
+                artifact_local_ids=["art_rag"],
+                statement_refs=[
+                    StatementReference(
+                        artifact_local_id="art_rag",
+                        statement_local_id="stmt_rag_retrieves",
+                    )
+                ],
+                confidence=0.94,
+            ),
+            CoverageDetailAssessment(
+                detail_id="detail_caveat",
+                unit_id="unit_caveat",
+                status="covered",
+                represented_knowledge=["The persistence caveat is represented."],
+                missing_knowledge=[],
+                evidence_local_ids=["ev_caveat"],
+                artifact_local_ids=["art_wiki"],
+                statement_refs=[
+                    StatementReference(
+                        artifact_local_id="art_wiki",
+                        statement_local_id="stmt_wiki_caveat",
+                    )
+                ],
+                confidence=0.9,
+            ),
+        ],
         missing_or_weak_areas=[],
         provenance_issues=[],
         overgeneralization_risks=[],
@@ -396,12 +529,41 @@ def _complete_coverage() -> CoverageReport:
 
 
 def _follow_up_result(plan: CompilationPassPlan) -> CompilationPassResult:
+    target_units = plan.target_unit_ids or ["unit_follow_up"]
+    ledger_ids = plan.target_detail_ids or [
+        f"ledger_{unit_id}" for unit_id in plan.target_unit_ids
+    ]
+    ledger_items = [
+        ObservedDetail(
+            local_id=detail_id,
+            source_unit_id=target_units[min(index, len(target_units) - 1)],
+            detail_kind="follow_up_check",
+            description=f"Follow-up coverage check for {detail_id}.",
+            locator=_locator("section", detail_id),
+            importance=0.5,
+            query_hint=f"follow-up {detail_id}",
+        )
+        for index, detail_id in enumerate(ledger_ids)
+    ]
     return CompilationPassResult(
         pass_id=plan.pass_id,
+        ledger_items=ledger_items,
         evidence_items=[],
         artifacts=[],
         semantic_nodes=[],
         relations=[],
+        detail_coverage=[
+            CompiledDetailCoverage(
+                detail_id=item.local_id,
+                status="missing",
+                evidence_local_ids=[],
+                artifact_local_ids=[],
+                statement_refs=[],
+                notes="Synthetic follow-up fixture ledger item.",
+                confidence=0.0,
+            )
+            for item in ledger_items
+        ],
         review_items=[],
         covered_unit_ids=plan.target_unit_ids,
         notes=["Follow-up pass completed."],

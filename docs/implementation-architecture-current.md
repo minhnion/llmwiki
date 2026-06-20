@@ -1,8 +1,8 @@
 # Kiến trúc kỹ thuật LLM Wiki hiện tại
 
-> Lưu ý: ingest đã được nâng cấp lên Knowledge Compiler V3 quality. Phần mô tả one-shot extraction
+> Lưu ý: ingest đã được nâng cấp lên Knowledge Compiler V6 source ledger. Phần mô tả one-shot extraction
 > bên dưới được giữ để giải thích read model tương thích `evidence/claims/entities`.
-> Orchestration hiện tại, source manifest, multi-pass artifacts, coverage gate và graph tự
+> Orchestration hiện tại, source manifest, observed/ledger/discovered details, artifacts, coverage gate và graph tự
 > động được mô tả tại `docs/knowledge-compiler-v2-implementation.md`.
 
 Tài liệu này mô tả implementation đang có trong codebase tại thời điểm hiện tại. Mục tiêu là giải thích hệ thống thực sự làm gì từ lúc người dùng tải tài liệu lên cho tới khi chatbot trả lời, knowledge graph được dựng ra sao, dữ liệu được lưu ở đâu và vai trò của từng lớp.
@@ -20,13 +20,16 @@ artifact retrieval và source re-inspection, được mô tả tại
 Người dùng tải tệp
   -> đăng ký source và hash nội dung
   -> LLM/VLM đọc trực tiếp tệp
-  -> lập manifest source và các pass biên dịch artifact
-  -> validate provenance, hardening toàn nguồn theo contract mở và audit coverage
+  -> lập manifest source và observed detail inventory
+  -> chạy dynamic compilation plan theo semantic units với source-unit ledger accounting
+  -> biên dịch ledger details thành artifact/evidence/statement/discovered details
+  -> validate provenance, audit coverage theo unit/detail và repair chọn lọc khi cần
   -> sinh trang wiki Markdown
   -> lưu evidence, claims, artifacts, statements, relations và FTS vào SQLite
   -> dựng relation graph và phát hiện mâu thuẫn
-  -> truy xuất đa kênh bằng SQLite FTS + graph
-  -> LLM rerank bằng chứng
+  -> lập artifact embeddings, knowledge map và FTS artifact/wiki
+  -> truy xuất đa kênh bằng semantic artifact retrieval + FTS + graph
+  -> LLM navigation/rerank bằng chứng
   -> LLM tổng hợp câu trả lời có citation
   -> frontend hiển thị source, chat, evidence và graph
 ```
@@ -108,13 +111,19 @@ python -m backend.app.cli sources ingest <source_id>
 1. Tải source metadata từ SQLite.
 2. Kiểm tra source tồn tại và kích thước hợp lệ.
 3. Tạo `ingest_job` trạng thái running.
-4. Gọi `OpenAIResponsesClient.extract_source()`.
-5. Sinh trang source Markdown.
-6. Ghi extraction artifacts vào SQLite trong transaction.
-7. Cập nhật FTS indexes.
-8. Chuyển source sang `ingested`.
-9. Đánh dấu job completed hoặc failed.
-10. Ghi wiki log.
+4. Gọi `OpenAIResponsesClient.profile_source()` để tạo manifest và observed details.
+5. Chạy các pass trong `manifest.compilation_plan`; mỗi pass phải tạo `ledger_items` cho
+   target source units rồi sinh evidence, artifacts, statements, relations, discovered
+   details và `detail_coverage`.
+6. Audit coverage theo source unit và observed/ledger/discovered detail; nếu thiếu, chạy một selective repair
+   pass gộp trong audit iteration.
+7. Project compiled artifact state sang read model evidence/claims/entities tương thích.
+8. Sinh source page và knowledge pages Markdown.
+9. Ghi extraction artifacts, compiler artifacts, wiki pages và FTS vào SQLite.
+10. Dựng graph trong source scope.
+11. Lập semantic artifact index nếu semantic indexer được cấu hình.
+12. Chuyển source sang `ingested` hoặc `needs_review`.
+13. Đánh dấu job completed hoặc failed và ghi wiki log.
 
 ### File input multimodal
 
@@ -139,6 +148,11 @@ Hệ thống chưa OCR trước. Đối với scan/ảnh, prompt yêu cầu mode
 Với tài liệu non-PDF như ODT và DOCX, OpenAI hiện chỉ đưa phần text trích xuất vào
 model context; ảnh và biểu đồ nhúng không được giữ lại. Nếu layout, hình hoặc biểu
 đồ là bằng chứng quan trọng, nên chuyển tài liệu sang PDF trước khi upload.
+
+Ngoài file input, hệ thống tạo thêm `SOURCE_TEXT_CONTEXT_JSON` cho các định dạng có text
+dễ trích xuất như Markdown, text, ODT và DOCX. Đây là lớp đọc phụ trợ để giảm mất chi tiết
+khi compile/audit; nó không phải raw chunk index, không được dùng làm retrieval corpus chính
+và không thay thế raw file làm source of truth.
 
 ### Structured output
 
