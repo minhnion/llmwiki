@@ -1,8 +1,9 @@
-from backend.app.api.routes.health import health
-from backend.app.core.config import Settings
+from fastapi.testclient import TestClient
+
+from backend.app.main import app
 
 
 def test_health_endpoint() -> None:
-    response = health(Settings())
-
-    assert response.status == "ok"
+    response = TestClient(app).get("/api/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"

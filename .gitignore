@@ -11,39 +11,26 @@ __pycache__/
 venv/
 .env
 
-# Runtime data
-.phase1-eval/
-.phase1-eval-*/
+# Runtime database
 data/*.sqlite
 data/*.sqlite-*
+
+# User-provided raw sources
 raw/sources/*
 raw/attachments/*
 !raw/sources/.gitkeep
 !raw/attachments/.gitkeep
+
+# Generated wiki runtime content
 wiki/log.md
+wiki/pages/*
 wiki/sources/*
-wiki/entities/*
-wiki/knowledge/*
-!wiki/knowledge/phase-1-quality-hardening.md
-wiki/concepts/*
-wiki/events/*
-wiki/methods/*
-wiki/datasets/*
-wiki/claims/*
-wiki/contradictions/*
-wiki/synthesis/*
 wiki/queries/*
+wiki/reviews/*
+!wiki/pages/.gitkeep
 !wiki/sources/.gitkeep
-!wiki/entities/.gitkeep
-!wiki/knowledge/.gitkeep
-!wiki/concepts/.gitkeep
-!wiki/events/.gitkeep
-!wiki/methods/.gitkeep
-!wiki/datasets/.gitkeep
-!wiki/claims/.gitkeep
-!wiki/contradictions/.gitkeep
-!wiki/synthesis/.gitkeep
 !wiki/queries/.gitkeep
+!wiki/reviews/.gitkeep
 
 # Frontend
 node_modules/

@@ -3,12 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 import type {
-  Contradiction,
-  GraphEntityDetail,
-  GraphVisualization,
   QueryResult,
   SourceIngestResult,
   SourceRef,
+  WikiPage,
+  WikiPageSummary,
 } from "./domain/models";
 import type { QueryInput, UploadSourceInput } from "./services/apiClient";
 import { WorkbenchProvider } from "./services/WorkbenchProvider";
@@ -26,24 +25,36 @@ const source: SourceRef = {
   status: "ingested",
   created_at: "2026-06-18T00:00:00Z",
   updated_at: "2026-06-18T00:00:00Z",
+  ingested_at: "2026-06-18T00:00:00Z",
 };
 
-const graph: GraphVisualization = {
-  nodes: [
-    { id: "ent_1", label: "LLM Wiki", node_type: "entity", confidence: 0.9 },
-    { id: "literal_1", label: "Knowledge artifacts", node_type: "text", confidence: 0.8 },
-  ],
-  edges: [
+const pageSummary: WikiPageSummary = {
+  id: "page_1",
+  path: "/wiki/pages/persistent-wiki.md",
+  title: "Persistent Wiki",
+  page_type: "knowledge pattern",
+  summary: "Knowledge is maintained before query time.",
+  status: "active",
+  confidence: 0.93,
+  source_ids: ["src_1"],
+  updated_at: "2026-06-18T00:00:00Z",
+};
+
+const page: WikiPage = {
+  ...pageSummary,
+  body: "# Persistent Wiki\n\nKnowledge compounds across operations.",
+  evidence_refs: [
     {
-      id: "rel_1",
-      source: "ent_1",
-      target: "literal_1",
-      label: "persists",
-      confidence: 0.9,
-      claim_id: "cl_1",
-      evidence_id: "ev_1",
+      id: "ev_1",
+      source_id: "src_1",
+      locator: "section: concept",
+      quote_or_summary: "A persistent wiki accumulates knowledge.",
+      modality: "text",
+      confidence: 0.95,
     },
   ],
+  related_page_ids: [],
+  created_at: "2026-06-18T00:00:00Z",
 };
 
 class FakeWorkbenchService implements WorkbenchGateway {
@@ -55,70 +66,52 @@ class FakeWorkbenchService implements WorkbenchGateway {
     .fn<(sourceId: string) => Promise<SourceIngestResult>>()
     .mockResolvedValue({
       source,
-      page_path: "/wiki/source.md",
-      evidence_count: 2,
-      claim_count: 2,
-      entity_count: 1,
-      review_item_count: 0,
-      compiler_run_id: "crun_1",
-      pass_count: 1,
-      artifact_count: 2,
-      coverage_status: "complete",
-      graph_run_id: "grun_1",
-      relation_count: 1,
-      contradiction_count: 0,
+      operation_id: "op_1",
+      skipped: false,
+      changed_page_ids: ["page_1"],
+      changed_page_paths: ["pages/persistent-wiki.md"],
+      review_count: 0,
+      model_calls: 2,
+      input_tokens: 200,
+      output_tokens: 100,
     });
-  buildGraph = vi.fn().mockResolvedValue({
-    graph_run_id: "grun_1",
-    source_ids: [],
-    claim_count: 2,
-    relation_count: 1,
-    contradiction_count: 0,
-    merge_candidate_count: 0,
-    entity_page_count: 1,
-    status: "completed",
-    started_at: "2026-06-18T00:00:00Z",
-    finished_at: "2026-06-18T00:00:01Z",
-  });
   ask = vi
     .fn<(input: QueryInput) => Promise<QueryResult>>()
     .mockResolvedValue(queryResult());
-  graph = vi.fn<(query: string) => Promise<GraphVisualization>>().mockResolvedValue(graph);
-  entity = vi
-    .fn<(entityIdOrName: string) => Promise<GraphEntityDetail>>()
-    .mockRejectedValue(new Error("Not used"));
-  contradictions = vi
-    .fn<() => Promise<Contradiction[]>>()
-    .mockResolvedValue([]);
+  listPages = vi.fn<() => Promise<WikiPageSummary[]>>().mockResolvedValue([pageSummary]);
+  getPage = vi.fn<(pageId: string) => Promise<WikiPage>>().mockResolvedValue(page);
+  rebuildWiki = vi
+    .fn<() => Promise<WikiPageSummary[]>>()
+    .mockResolvedValue([pageSummary]);
 }
 
 describe("App", () => {
-  it("loads sources, graph, and contradictions", async () => {
+  it("loads sources and the generated wiki catalog", async () => {
     renderApp(new FakeWorkbenchService());
 
     expect(await screen.findByText("LLM Wiki Notes")).toBeInTheDocument();
-    expect(screen.getByText("2 nút")).toBeInTheDocument();
-    expect(screen.getByText("Không có mâu thuẫn đang mở.")).toBeInTheDocument();
+    expect(await screen.findByText("Persistent Wiki")).toBeInTheDocument();
+    expect(screen.getByText(/knowledge pattern · 1 nguồn/i)).toBeInTheDocument();
   });
 
-  it("submits a grounded chat question and renders citations", async () => {
+  it("submits a grounded question and renders citations", async () => {
     const service = new FakeWorkbenchService();
     renderApp(service);
     await screen.findByText("LLM Wiki Notes");
 
-    fireEvent.change(screen.getByPlaceholderText("Đặt câu hỏi cho LLM Wiki..."), {
-      target: { value: "What does LLM Wiki persist?" },
+    fireEvent.change(screen.getByPlaceholderText("Đặt câu hỏi..."), {
+      target: { value: "What does a persistent wiki store?" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Hỏi" }));
+    fireEvent.click(screen.getByRole("button", { name: "Gửi" }));
 
-    expect(await screen.findByText(/persists source-grounded artifacts/i)).toBeInTheDocument();
-    expect(screen.getAllByText("section: concept", { exact: false })).toHaveLength(2);
+    expect(await screen.findByText(/stores maintained knowledge/i)).toBeInTheDocument();
+    expect(screen.getByText(/page_1 · section: concept/i)).toBeInTheDocument();
     expect(service.ask).toHaveBeenCalledWith(
-      expect.objectContaining({ question: "What does LLM Wiki persist?" }),
+      expect.objectContaining({ question: "What does a persistent wiki store?" }),
     );
   });
 
-  it("uploads a selected file", async () => {
+  it("uploads and ingests a source through the Wiki Agent", async () => {
     const service = new FakeWorkbenchService();
     renderApp(service);
     await screen.findByText("LLM Wiki Notes");
@@ -128,39 +121,39 @@ describe("App", () => {
       target: { files: [file] },
     });
     fireEvent.click(screen.getByRole("button", { name: "Tải lên" }));
-
     await waitFor(() => expect(service.uploadSource).toHaveBeenCalled());
-    expect(service.uploadSource.mock.calls[0][0].file).toBe(file);
-  });
 
-  it("runs source ingest and graph build from the workbench", async () => {
-    const service = new FakeWorkbenchService();
-    renderApp(service);
-    await screen.findByText("LLM Wiki Notes");
-
-    fireEvent.click(screen.getByRole("button", { name: "Ingest" }));
-
+    fireEvent.click(screen.getByRole("button", { name: "Wiki Agent" }));
     await waitFor(() => expect(service.ingestSource).toHaveBeenCalledWith("src_1"));
-    expect(
-      await screen.findByText(/2 artifact, coverage complete, 1 quan hệ graph/i),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Dựng lại graph" }));
-
-    await waitFor(() => expect(service.buildGraph).toHaveBeenCalledWith([]));
-    expect(await screen.findByText(/Đã dựng graph: 1 quan hệ/i)).toBeInTheDocument();
+    expect(await screen.findByText(/1 trang thay đổi, 2 model calls/i)).toBeInTheDocument();
   });
 
-  it("uses selected ingested sources as query scope", async () => {
+  it("opens a wiki page and rebuilds the deterministic index", async () => {
+    const service = new FakeWorkbenchService();
+    renderApp(service);
+    const pageButton = await screen.findByRole("button", { name: /Persistent Wiki/i });
+
+    fireEvent.click(pageButton);
+    expect(
+      await screen.findByText(/Knowledge compounds across operations/i),
+    ).toBeInTheDocument();
+    expect(service.getPage).toHaveBeenCalledWith("page_1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Đồng bộ" }));
+    await waitFor(() => expect(service.rebuildWiki).toHaveBeenCalled());
+    expect(await screen.findByText("Wiki và SQLite đã đồng bộ.")).toBeInTheDocument();
+  });
+
+  it("uses selected sources as optional query scope", async () => {
     const service = new FakeWorkbenchService();
     renderApp(service);
     await screen.findByText("LLM Wiki Notes");
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Dùng trong phạm vi" }));
-    fireEvent.change(screen.getByPlaceholderText("Đặt câu hỏi cho LLM Wiki..."), {
+    fireEvent.click(screen.getByRole("checkbox", { name: "Query scope" }));
+    fireEvent.change(screen.getByPlaceholderText("Đặt câu hỏi..."), {
       target: { value: "Tài liệu lưu trữ điều gì?" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Hỏi" }));
+    fireEvent.click(screen.getByRole("button", { name: "Gửi" }));
 
     await waitFor(() =>
       expect(service.ask).toHaveBeenCalledWith(
@@ -184,57 +177,21 @@ function renderApp(service: WorkbenchGateway) {
 function queryResult(): QueryResult {
   return {
     query_id: "qry_1",
-    question: "What does LLM Wiki persist?",
+    question: "What does a persistent wiki store?",
     mode: "deep",
-    answer: "LLM Wiki persists source-grounded artifacts.",
+    answer: "A persistent wiki stores maintained knowledge before query time.",
     confidence: "high",
     citations: [
       {
-        evidence_id: "ev_1",
+        page_id: "page_1",
         source_id: "src_1",
-        source_title: "LLM Wiki Notes",
         locator: "section: concept",
-        quote_or_summary: "Defines persistence.",
-        claim_ids: ["cl_1"],
+        quote_or_summary: "A persistent wiki accumulates knowledge.",
       },
     ],
-    used_claim_ids: ["cl_1"],
-    matched_entities: ["LLM Wiki"],
-    contradictions: [],
     open_questions: [],
-    follow_up_questions: [],
-    selected_evidence: [
-      {
-        evidence_id: "ev_1",
-        source_id: "src_1",
-        source_title: "LLM Wiki Notes",
-        source_path: "/tmp/notes.md",
-        wiki_page_path: "/wiki/notes.md",
-        locator: "section: concept",
-        modality: "text",
-        text: "LLM Wiki persists artifacts.",
-        summary: "Defines persistence.",
-        confidence: 0.9,
-        claim_ids: ["cl_1"],
-        claims: ["LLM Wiki persists artifacts."],
-        entities: ["LLM Wiki"],
-        retrieval_score: 4,
-        retrieval_channels: ["graph", "claim"],
-      },
-    ],
-    candidate_count: 2,
+    pages_read: ["page_1"],
+    sources_inspected: [],
     created_at: "2026-06-18T00:00:00Z",
-    plan: {
-      rewritten_question: "What does LLM Wiki persist?",
-      intent: "fact",
-      answer_language: "English",
-      retrieval_strategy: "deep",
-      keywords: ["LLM Wiki"],
-      entity_hints: ["LLM Wiki"],
-      subquestions: [],
-      must_have_evidence: [],
-      source_filters: [],
-      time_filters: [],
-    },
   };
 }

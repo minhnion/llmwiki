@@ -4,9 +4,9 @@ from pathlib import Path
 
 from backend.app.core.clock import utc_now_iso
 from backend.app.core.hashing import sha256_file
-from backend.app.core.ids import ingest_job_id, source_id_from_hash, source_version_id
+from backend.app.core.ids import operation_id, source_id_from_hash, source_version_id
 from backend.app.domain.models import SourceRef, SourceVersion
-from backend.app.repositories.jobs import SQLiteIngestJobRepository
+from backend.app.repositories.operations import SQLiteOperationRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
 from backend.app.services.wiki_log import WikiLogWriter
 
@@ -23,11 +23,11 @@ class SourceRegistryService:
     def __init__(
         self,
         source_repository: SQLiteSourceRepository,
-        job_repository: SQLiteIngestJobRepository,
+        operation_repository: SQLiteOperationRepository,
         wiki_log_writer: WikiLogWriter,
     ) -> None:
         self.source_repository = source_repository
-        self.job_repository = job_repository
+        self.operation_repository = operation_repository
         self.wiki_log_writer = wiki_log_writer
 
     def register(self, command: RegisterSourceCommand) -> SourceRef:
@@ -39,36 +39,54 @@ class SourceRegistryService:
 
         sha256 = sha256_file(path)
         now = utc_now_iso()
-        source = SourceRef(
-            id=source_id_from_hash(sha256),
-            title=command.title or path.stem,
-            path=path,
-            source_type=command.source_type or self._infer_source_type(path),
-            sha256=sha256,
-            mime_type=mimetypes.guess_type(path.name)[0],
-            size_bytes=path.stat().st_size,
-            tags=command.tags,
-            status="registered",
-            created_at=now,
-            updated_at=now,
+        current_operation_id = operation_id()
+        self.operation_repository.start(
+            current_operation_id,
+            "register",
+            None,
+            now,
+            {"path": str(path)},
         )
-        saved_source = self.source_repository.add(source)
-        self.source_repository.add_version(
-            SourceVersion(
-                id=source_version_id(source.id, sha256),
-                source_id=source.id,
-                sha256=sha256,
+        try:
+            source = SourceRef(
+                id=source_id_from_hash(sha256),
+                title=command.title or path.stem,
                 path=path,
+                source_type=command.source_type or _infer_source_type(path),
+                sha256=sha256,
+                mime_type=mimetypes.guess_type(path.name)[0],
+                size_bytes=path.stat().st_size,
+                tags=list(command.tags),
+                status="registered",
                 created_at=now,
+                updated_at=now,
             )
-        )
-        self.job_repository.create_register_job(ingest_job_id(), source.id, now)
-        self.wiki_log_writer.append_source_registered(now, source.id, source.title, path)
-        return saved_source
+            saved = self.source_repository.add(source)
+            self.source_repository.add_version(
+                SourceVersion(
+                    id=source_version_id(source.id, sha256),
+                    source_id=source.id,
+                    sha256=sha256,
+                    path=path,
+                    created_at=now,
+                )
+            )
+            self.operation_repository.complete(
+                current_operation_id,
+                utc_now_iso(),
+                {"source_id": saved.id},
+            )
+            self.wiki_log_writer.append(
+                now,
+                "register",
+                saved.title,
+                {"source_id": saved.id, "path": str(path)},
+            )
+            return saved
+        except Exception as exc:
+            self.operation_repository.fail(current_operation_id, utc_now_iso(), str(exc))
+            raise
 
-    @staticmethod
-    def _infer_source_type(path: Path) -> str:
-        suffix = path.suffix.lower().lstrip(".")
-        if suffix:
-            return suffix
-        return "unknown"
+
+def _infer_source_type(path: Path) -> str:
+    return path.suffix.lower().lstrip(".") or "unknown"

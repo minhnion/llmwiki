@@ -1,7 +1,16 @@
 # Mục đích Wiki
 
-Wiki là lớp tri thức bền vững do hệ thống sinh và cập nhật từ tài liệu người dùng cung cấp.
+Wiki này là kho tri thức bền vững do Wiki Agent xây dựng và duy trì từ các
+nguồn do người dùng cung cấp.
 
-Mỗi nội dung quan trọng phải truy ngược được về nguồn, bằng chứng hoặc mệnh đề trong SQLite.
-Wiki hỗ trợ tổng hợp tri thức, truy vấn, dựng knowledge graph và phát hiện nội dung cần rà soát;
-không thay thế tài liệu gốc và không được xem là nguồn sự thật độc lập.
+Mục tiêu:
+
+- Tích lũy tri thức qua nhiều lần ingest và truy vấn.
+- Kết nối, bổ sung, qualify hoặc phản biện tri thức đã có khi xuất hiện nguồn
+  mới.
+- Trả lời câu hỏi dựa trên wiki và có thể kiểm chứng lại bằng raw source.
+- Giữ cấu trúc mở để thích nghi với mọi domain, ngôn ngữ và loại tài liệu.
+- Ưu tiên tính đúng, provenance, khả năng đọc và giá trị tái sử dụng.
+
+Wiki không có taxonomy nghiệp vụ cố định. Hướng nghiên cứu, câu hỏi trọng tâm
+và thesis có thể được người dùng chỉnh sửa tại đây theo từng project.

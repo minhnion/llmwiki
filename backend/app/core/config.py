@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 class Settings(BaseSettings):
-    app_name: str = Field(default="LLM Wiki", alias="LLM_WIKI_APP_NAME")
+    app_name: str = Field(default="LLM Wiki Agent", alias="LLM_WIKI_APP_NAME")
     environment: str = Field(default="development", alias="LLM_WIKI_ENV")
     log_level: str = Field(default="INFO", alias="LLM_WIKI_LOG_LEVEL")
     database_path: Path = Field(
@@ -17,45 +17,18 @@ class Settings(BaseSettings):
     )
     raw_dir: Path = Field(default=PROJECT_ROOT / "raw", alias="LLM_WIKI_RAW_DIR")
     wiki_dir: Path = Field(default=PROJECT_ROOT / "wiki", alias="LLM_WIKI_WIKI_DIR")
-    port: int = Field(default=8020, alias="LLM_WIKI_PORT")
+    port: int = Field(default=8030, alias="LLM_WIKI_PORT")
     cors_origins: str = Field(
         default="http://localhost:5173,http://127.0.0.1:5173",
         alias="LLM_WIKI_CORS_ORIGINS",
     )
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o", alias="LLM_WIKI_MODEL")
-    openai_embedding_model: str = Field(
-        default="text-embedding-3-small",
-        alias="LLM_WIKI_EMBEDDING_MODEL",
-    )
     preferred_language: str = Field(default="vi", alias="LLM_WIKI_PREFERRED_LANGUAGE")
     max_file_bytes: int = Field(default=50_000_000, alias="LLM_WIKI_MAX_FILE_BYTES")
-    max_output_tokens: int = Field(default=16000, alias="LLM_WIKI_MAX_OUTPUT_TOKENS")
-    compiler_version: str = Field(
-        default="knowledge-compiler-v6-source-ledger",
-        alias="LLM_WIKI_COMPILER_VERSION",
-    )
-    compiler_prompt_version: str = Field(
-        default="compiler-prompts-v6",
-        alias="LLM_WIKI_COMPILER_PROMPT_VERSION",
-    )
-    compiler_schema_version: str = Field(
-        default="compiler-schema-v6",
-        alias="LLM_WIKI_COMPILER_SCHEMA_VERSION",
-    )
-    compiler_max_passes: int = Field(default=5, alias="LLM_WIKI_COMPILER_MAX_PASSES")
-    compiler_max_pass_retries: int = Field(
-        default=1,
-        alias="LLM_WIKI_COMPILER_MAX_PASS_RETRIES",
-    )
-    compiler_max_audit_iterations: int = Field(
-        default=3,
-        alias="LLM_WIKI_COMPILER_MAX_AUDIT_ITERATIONS",
-    )
-    source_text_context_max_chars: int = Field(
-        default=120_000,
-        alias="LLM_WIKI_SOURCE_TEXT_CONTEXT_MAX_CHARS",
-    )
+    max_output_tokens: int = Field(default=12000, alias="LLM_WIKI_MAX_OUTPUT_TOKENS")
+    wiki_search_limit: int = Field(default=12, alias="LLM_WIKI_SEARCH_LIMIT")
+    query_source_limit: int = Field(default=3, alias="LLM_WIKI_QUERY_SOURCE_LIMIT")
 
     model_config = SettingsConfigDict(
         env_file=".env",

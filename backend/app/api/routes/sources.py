@@ -1,24 +1,16 @@
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 
 from backend.app.application.container import AppContainer, get_container
+from backend.app.application.factory import build_source_ingest
 from backend.app.core.text import slugify
-from backend.app.domain.compiler import CompilationInspection
 from backend.app.domain.models import SourceRef
-from backend.app.repositories.compiler import SQLiteCompilerRepository
-from backend.app.repositories.extractions import SQLiteExtractionRepository
-from backend.app.repositories.jobs import SQLiteIngestJobRepository
-from backend.app.repositories.semantic import SQLiteSemanticRepository
+from backend.app.repositories.operations import SQLiteOperationRepository
 from backend.app.repositories.sources import SQLiteSourceRepository
-from backend.app.repositories.wiki import SQLiteWikiRepository
-from backend.app.services.knowledge_page_writer import KnowledgePageWriter
-from backend.app.services.llm_client import OpenAIResponsesClient
-from backend.app.services.semantic_indexer import SemanticIndexer
-from backend.app.services.source_ingest import SourceIngestResult, SourceIngestService
-from backend.app.services.source_page_writer import SourcePageWriter
+from backend.app.services.source_ingest import SourceIngestResult
 from backend.app.services.source_registry import RegisterSourceCommand, SourceRegistryService
 from backend.app.services.wiki_log import WikiLogWriter
 
@@ -27,7 +19,7 @@ ContainerDependency = Annotated[AppContainer, Depends(get_container)]
 
 
 class RegisterSourceRequest(BaseModel):
-    path: str = Field(..., description="Path to a local source file.")
+    path: str
     title: str | None = None
     source_type: str | None = None
     tags: list[str] = Field(default_factory=list)
@@ -45,6 +37,7 @@ class SourceResponse(BaseModel):
     status: str
     created_at: str | None
     updated_at: str | None
+    ingested_at: str | None
 
     @classmethod
     def from_domain(cls, source: SourceRef) -> "SourceResponse":
@@ -56,103 +49,19 @@ class SourceResponse(BaseModel):
             sha256=source.sha256,
             mime_type=source.mime_type,
             size_bytes=source.size_bytes,
-            tags=list(source.tags),
+            tags=source.tags,
             status=source.status,
             created_at=source.created_at,
             updated_at=source.updated_at,
-        )
-
-
-class SourceIngestResponse(BaseModel):
-    source: SourceResponse
-    page_path: str
-    evidence_count: int
-    claim_count: int
-    entity_count: int
-    review_item_count: int
-    compiler_run_id: str
-    pass_count: int
-    artifact_count: int
-    coverage_status: str
-    graph_run_id: str
-    relation_count: int
-    contradiction_count: int
-    wiki_page_count: int
-    indexed_artifact_count: int
-    embedding_count: int
-    knowledge_map_entry_count: int
-
-    @classmethod
-    def from_domain(cls, result: SourceIngestResult) -> "SourceIngestResponse":
-        semantic_index = result.semantic_index
-        return cls(
-            source=SourceResponse.from_domain(result.source),
-            page_path=str(result.page.path),
-            evidence_count=len(result.extraction.evidence_items),
-            claim_count=len(result.extraction.claims),
-            entity_count=len(result.extraction.entities),
-            review_item_count=len(result.extraction.review_items),
-            compiler_run_id=result.compiler_run_id,
-            pass_count=result.pass_count,
-            artifact_count=len(result.compilation.artifacts),
-            coverage_status=result.coverage.coverage_status,
-            graph_run_id=result.graph.graph_run_id,
-            relation_count=result.graph.relation_count,
-            contradiction_count=result.graph.contradiction_count,
-            wiki_page_count=len(result.wiki_pages),
-            indexed_artifact_count=semantic_index.artifact_count if semantic_index else 0,
-            embedding_count=semantic_index.embedding_count if semantic_index else 0,
-            knowledge_map_entry_count=(
-                semantic_index.knowledge_map_entry_count if semantic_index else 0
-            ),
+            ingested_at=source.ingested_at,
         )
 
 
 def build_source_registry(container: AppContainer) -> SourceRegistryService:
     return SourceRegistryService(
         source_repository=SQLiteSourceRepository(container.database),
-        job_repository=SQLiteIngestJobRepository(container.database),
+        operation_repository=SQLiteOperationRepository(container.database),
         wiki_log_writer=WikiLogWriter(container.settings.wiki_dir),
-    )
-
-
-def build_source_ingest(container: AppContainer) -> SourceIngestService:
-    from backend.app.api.routes.graph import build_graph_builder
-
-    if not container.settings.openai_api_key:
-        raise ValueError("OPENAI_API_KEY is required for ingest.")
-    llm_client = OpenAIResponsesClient(
-        api_key=container.settings.openai_api_key,
-        model=container.settings.openai_model,
-        max_output_tokens=container.settings.max_output_tokens,
-        preferred_language=container.settings.preferred_language,
-        source_text_context_max_chars=container.settings.source_text_context_max_chars,
-    )
-    semantic_repository = SQLiteSemanticRepository(container.database)
-    return SourceIngestService(
-        source_repository=SQLiteSourceRepository(container.database),
-        compiler_repository=SQLiteCompilerRepository(container.database),
-        extraction_repository=SQLiteExtractionRepository(container.database),
-        job_repository=SQLiteIngestJobRepository(container.database),
-        llm_client=llm_client,
-        graph_builder=build_graph_builder(container),
-        source_page_writer=SourcePageWriter(container.settings.wiki_dir),
-        knowledge_page_writer=KnowledgePageWriter(container.settings.wiki_dir),
-        wiki_repository=SQLiteWikiRepository(container.database),
-        wiki_log_writer=WikiLogWriter(container.settings.wiki_dir),
-        max_file_bytes=container.settings.max_file_bytes,
-        model=container.settings.openai_model,
-        compiler_version=container.settings.compiler_version,
-        prompt_version=container.settings.compiler_prompt_version,
-        schema_version=container.settings.compiler_schema_version,
-        max_passes=container.settings.compiler_max_passes,
-        max_pass_retries=container.settings.compiler_max_pass_retries,
-        max_audit_iterations=container.settings.compiler_max_audit_iterations,
-        semantic_indexer=SemanticIndexer(
-            repository=semantic_repository,
-            embedding_client=llm_client,
-            embedding_model=container.settings.openai_embedding_model,
-        ),
     )
 
 
@@ -161,9 +70,8 @@ def register_source(
     request: RegisterSourceRequest,
     container: ContainerDependency,
 ) -> SourceResponse:
-    service = build_source_registry(container)
     try:
-        source = service.register(
+        source = build_source_registry(container).register(
             RegisterSourceCommand(
                 path=Path(request.path),
                 title=request.title,
@@ -190,8 +98,7 @@ async def upload_source(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Filename is required.")
     upload_dir = container.settings.raw_dir / "sources"
     upload_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = _safe_upload_name(file.filename)
-    destination = _next_available_path(upload_dir / safe_name)
+    destination = _next_available_path(upload_dir / _safe_upload_name(file.filename))
     size = 0
     with destination.open("wb") as output:
         while chunk := await file.read(1024 * 1024):
@@ -200,16 +107,11 @@ async def upload_source(
                 destination.unlink(missing_ok=True)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(
-                        f"Uploaded file exceeds max size: "
-                        f"{size} > {container.settings.max_file_bytes} bytes"
-                    ),
+                    detail=f"Uploaded file exceeds maximum size: {size}",
                 )
             output.write(chunk)
-
-    service = build_source_registry(container)
     try:
-        source = service.register(
+        source = build_source_registry(container).register(
             RegisterSourceCommand(
                 path=destination,
                 title=title or Path(file.filename).stem,
@@ -217,55 +119,43 @@ async def upload_source(
                 tags=tuple(tags or []),
             )
         )
-    except ValueError as exc:
+    except Exception:
         destination.unlink(missing_ok=True)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise
     return SourceResponse.from_domain(source)
 
 
 @router.get("", response_model=list[SourceResponse])
 def list_sources(container: ContainerDependency) -> list[SourceResponse]:
-    repository = SQLiteSourceRepository(container.database)
-    return [SourceResponse.from_domain(source) for source in repository.list()]
-
-
-@router.get("/{source_id}/compilation", response_model=CompilationInspection)
-def inspect_compilation(
-    source_id: str,
-    container: ContainerDependency,
-) -> CompilationInspection:
-    inspection = SQLiteCompilerRepository(container.database).get_latest_inspection(source_id)
-    if inspection is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Compilation run not found",
-        )
-    return inspection
-
-
-@router.post("/{source_id}/ingest", response_model=SourceIngestResponse)
-async def ingest_source(source_id: str, container: ContainerDependency) -> SourceIngestResponse:
-    try:
-        service = build_source_ingest(container)
-        result = await service.ingest(source_id)
-    except ValueError as exc:
-        message = str(exc)
-        http_status = (
-            status.HTTP_404_NOT_FOUND
-            if "Source not found" in message
-            else status.HTTP_400_BAD_REQUEST
-        )
-        raise HTTPException(status_code=http_status, detail=message) from exc
-    return SourceIngestResponse.from_domain(result)
+    return [
+        SourceResponse.from_domain(source)
+        for source in SQLiteSourceRepository(container.database).list()
+    ]
 
 
 @router.get("/{source_id}", response_model=SourceResponse)
 def get_source(source_id: str, container: ContainerDependency) -> SourceResponse:
-    repository = SQLiteSourceRepository(container.database)
-    source = repository.get(source_id)
+    source = SQLiteSourceRepository(container.database).get(source_id)
     if source is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
     return SourceResponse.from_domain(source)
+
+
+@router.post("/{source_id}/ingest", response_model=SourceIngestResult)
+async def ingest_source(
+    source_id: str,
+    container: ContainerDependency,
+    force: bool = Query(default=False),
+) -> SourceIngestResult:
+    try:
+        return await build_source_ingest(container).ingest(source_id, force=force)
+    except ValueError as exc:
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if "Source not found" in str(exc)
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
 
 
 def _safe_upload_name(filename: str) -> str:
@@ -282,4 +172,4 @@ def _next_available_path(path: Path) -> Path:
         candidate = path.with_name(f"{path.stem}-{index}{path.suffix}")
         if not candidate.exists():
             return candidate
-    raise ValueError(f"Could not allocate upload path for {path.name}")
+    raise ValueError("Could not allocate a unique upload path.")
