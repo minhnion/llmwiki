@@ -10,7 +10,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         version="0.1.0",
-        description="SQLite-first multimodal LLM Wiki chatbot API.",
+        description="General-purpose agentic LLM Wiki API.",
     )
     app.add_middleware(
         CORSMiddleware,

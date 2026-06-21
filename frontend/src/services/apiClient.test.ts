@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiClient, ApiError } from "./apiClient";
 
 describe("ApiClient", () => {
-  it("sends query fields using the backend contract", async () => {
+  it("sends the minimal Wiki Agent query contract", async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ query_id: "qry_1" }), {
         status: 200,
@@ -17,9 +17,8 @@ describe("ApiClient", () => {
 
     await client.ask({
       question: "What is LLM Wiki?",
-      mode: "deep",
+      mode: "audit",
       sourceIds: ["src_1"],
-      maxEvidence: 6,
     });
 
     expect(fetcher).toHaveBeenCalledWith(
@@ -29,11 +28,8 @@ describe("ApiClient", () => {
     const request = fetcher.mock.calls[0][1] as RequestInit;
     expect(JSON.parse(request.body as string)).toEqual({
       question: "What is LLM Wiki?",
-      mode: "deep",
+      mode: "audit",
       source_ids: ["src_1"],
-      tags: [],
-      max_candidates: 24,
-      max_evidence: 6,
     });
   });
 
@@ -61,6 +57,28 @@ describe("ApiClient", () => {
     expect(form.get("title")).toBe("Notes");
     expect(form.get("source_type")).toBe("markdown");
     expect(form.getAll("tags")).toEqual(["test"]);
+  });
+
+  it("uses the wiki catalog and rebuild endpoints", async () => {
+    const fetcher = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    const client = new ApiClient({ baseUrl: "/api", fetcher });
+
+    await client.listPages();
+    await client.rebuildWiki();
+
+    expect(fetcher).toHaveBeenNthCalledWith(1, "/api/wiki/pages", undefined);
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      "/api/wiki/rebuild",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 
   it("raises ApiError with backend detail", async () => {

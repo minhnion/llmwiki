@@ -2,271 +2,158 @@ import asyncio
 import base64
 import json
 import mimetypes
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import TypeVar
 
 from openai import OpenAI
+from pydantic import BaseModel
 
-from backend.app.core.text import compact_text
-from backend.app.domain.extraction import (
-    INGEST_EXTRACTION_JSON_SCHEMA,
-    IngestExtractionResult,
-)
-from backend.app.domain.graph import (
-    CONTRADICTION_DETECTION_JSON_SCHEMA,
-    GRAPH_EXTRACTION_JSON_SCHEMA,
-    ClaimGraphContext,
-    ContradictionDetectionResult,
-    GraphExtractionResult,
-)
-from backend.app.domain.models import SourceRef
-from backend.app.domain.query import (
-    EVIDENCE_RANKING_JSON_SCHEMA,
-    QUERY_PLAN_JSON_SCHEMA,
-    QUERY_SYNTHESIS_JSON_SCHEMA,
-    EvidenceCandidate,
-    EvidenceRankingResult,
-    QueryAskCommand,
+from backend.app.domain.agent import (
+    AgentAnswer,
     QueryPlan,
-    QuerySynthesisResult,
+    SourceAnalysis,
+    WikiChangeSet,
 )
+from backend.app.domain.models import SourceRef, WikiPage, WikiPageSummary
+
+StructuredModel = TypeVar("StructuredModel", bound=BaseModel)
 
 
 @dataclass(frozen=True)
-class LLMRequest:
-    instructions: str
-    inputs: list[dict[str, object]] = field(default_factory=list)
+class LLMUsage:
+    model: str
+    input_tokens: int
+    output_tokens: int
+    latency_ms: int
 
 
-@dataclass(frozen=True)
-class LLMResponse:
-    text: str
-    structured: dict[str, object] | None = None
-
-
-class LLMClient(Protocol):
-    async def create_response(self, request: LLMRequest) -> LLMResponse:
-        """Create a model response for an application workflow."""
-
-    async def extract_source(self, source: SourceRef) -> IngestExtractionResult:
-        """Extract wiki-ready knowledge from a source file."""
-
-
-class OpenAIResponsesClient:
-    """Adapter for OpenAI Responses API file and structured-output calls."""
-
+class OpenAIWikiAgentClient:
     def __init__(
         self,
         api_key: str,
         model: str,
-        max_output_tokens: int = 6000,
-        preferred_language: str = "vi",
+        max_output_tokens: int,
+        preferred_language: str,
     ) -> None:
-        self.api_key = api_key
         self.model = model
         self.max_output_tokens = max_output_tokens
         self.preferred_language = preferred_language
         self.client = OpenAI(api_key=api_key)
 
-    async def create_response(self, request: LLMRequest) -> LLMResponse:
-        response = await asyncio.to_thread(
-            self.client.responses.create,
-            model=self.model,
-            instructions=request.instructions,
-            input=request.inputs,
-            max_output_tokens=self.max_output_tokens,
+    async def analyze_source(
+        self,
+        source: SourceRef,
+        purpose: str,
+        schema: str,
+        catalog: list[WikiPageSummary],
+    ) -> tuple[SourceAnalysis, LLMUsage]:
+        prompt = {
+            "source": _source_metadata(source),
+            "wiki_purpose": purpose,
+            "wiki_schema": schema,
+            "current_wiki_catalog": [item.model_dump() for item in catalog],
+        }
+        return await self._structured(
+            SourceAnalysis,
+            "wiki_agent_source_analysis",
+            _understand_instructions(self.preferred_language),
+            [_file_message(source.path, prompt)],
         )
-        return LLMResponse(text=response.output_text)
 
-    async def extract_source(self, source: SourceRef) -> IngestExtractionResult:
-        file_data = _base64_file_data(source.path, source.mime_type)
-        payload = await self._create_structured_response(
-            name="llm_wiki_ingest_extraction",
-            schema=INGEST_EXTRACTION_JSON_SCHEMA,
-            instructions=_ingest_instructions(self.preferred_language),
-            inputs=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_file",
-                            "filename": source.path.name,
-                            "file_data": file_data,
-                        },
-                        {
-                            "type": "input_text",
-                            "text": _source_prompt(source, self.preferred_language),
-                        },
-                    ],
-                }
-            ],
+    async def propose_wiki_changes(
+        self,
+        source: SourceRef,
+        purpose: str,
+        schema: str,
+        analysis: SourceAnalysis,
+        relevant_pages: list[WikiPage],
+    ) -> tuple[WikiChangeSet, LLMUsage]:
+        prompt = {
+            "source": _source_metadata(source),
+            "wiki_purpose": purpose,
+            "wiki_schema": schema,
+            "source_analysis": analysis.model_dump(),
+            "relevant_existing_pages": [_page_payload(page) for page in relevant_pages],
+        }
+        return await self._structured(
+            WikiChangeSet,
+            "wiki_agent_change_set",
+            _maintain_instructions(self.preferred_language),
+            [_file_message(source.path, prompt)],
         )
-        return IngestExtractionResult.model_validate(payload)
 
-    async def plan_query(self, command: QueryAskCommand) -> QueryPlan:
-        payload = await self._create_structured_response(
-            name="llm_wiki_query_plan",
-            schema=QUERY_PLAN_JSON_SCHEMA,
-            instructions=_query_plan_instructions(self.preferred_language),
-            inputs=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": json.dumps(command.model_dump(), ensure_ascii=False),
-                        }
-                    ],
-                }
-            ],
-        )
-        return QueryPlan.model_validate(payload)
-
-    async def rank_evidence(
+    async def plan_query(
         self,
         question: str,
-        plan: QueryPlan,
-        candidates: list[EvidenceCandidate],
-        max_evidence: int,
-    ) -> EvidenceRankingResult:
-        payload = await self._create_structured_response(
-            name="llm_wiki_evidence_ranking",
-            schema=EVIDENCE_RANKING_JSON_SCHEMA,
-            instructions=_evidence_ranking_instructions(
-                max_evidence,
-                self.preferred_language,
-            ),
-            inputs=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": json.dumps(
-                                {
-                                    "question": question,
-                                    "plan": plan.model_dump(),
-                                    "max_evidence": max_evidence,
-                                    "candidates": [
-                                        _candidate_payload(candidate)
-                                        for candidate in candidates
-                                    ],
-                                },
-                                ensure_ascii=False,
-                            ),
-                        }
-                    ],
-                }
+        mode: str,
+        purpose: str,
+        overview: str,
+        index: str,
+        catalog: list[WikiPageSummary],
+        sources: list[SourceRef],
+    ) -> tuple[QueryPlan, LLMUsage]:
+        return await self._structured(
+            QueryPlan,
+            "wiki_agent_query_plan",
+            _query_plan_instructions(self.preferred_language),
+            [
+                _text_message(
+                    {
+                        "question": question,
+                        "mode": mode,
+                        "wiki_purpose": purpose,
+                        "wiki_overview": overview,
+                        "wiki_index": index,
+                        "wiki_catalog": [item.model_dump() for item in catalog],
+                        "source_catalog": [_source_metadata(source) for source in sources],
+                    }
+                )
             ],
         )
-        return EvidenceRankingResult.model_validate(payload)
 
-    async def synthesize_answer(
+    async def answer_query(
         self,
         question: str,
+        mode: str,
         plan: QueryPlan,
-        evidence: list[EvidenceCandidate],
-        ranking: EvidenceRankingResult,
-    ) -> QuerySynthesisResult:
-        payload = await self._create_structured_response(
-            name="llm_wiki_query_synthesis",
-            schema=QUERY_SYNTHESIS_JSON_SCHEMA,
-            instructions=_query_synthesis_instructions(self.preferred_language),
-            inputs=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": json.dumps(
-                                {
-                                    "question": question,
-                                    "plan": plan.model_dump(),
-                                    "ranking": ranking.model_dump(),
-                                    "selected_evidence": [
-                                        _candidate_payload(candidate)
-                                        for candidate in evidence
-                                    ],
-                                },
-                                ensure_ascii=False,
-                            ),
-                        }
-                    ],
-                }
-            ],
+        pages: list[WikiPage],
+        sources: list[SourceRef],
+    ) -> tuple[AgentAnswer, LLMUsage]:
+        content: list[dict[str, object]] = []
+        for source in sources:
+            content.append(_file_content(source.path))
+        content.append(
+            {
+                "type": "input_text",
+                "text": json.dumps(
+                    {
+                        "question": question,
+                        "mode": mode,
+                        "plan": plan.model_dump(),
+                        "wiki_pages": [_page_payload(page) for page in pages],
+                        "inspected_sources": [_source_metadata(source) for source in sources],
+                    },
+                    ensure_ascii=False,
+                ),
+            }
         )
-        return QuerySynthesisResult.model_validate(payload)
-
-    async def extract_graph_relations(
-        self,
-        claims: list[ClaimGraphContext],
-    ) -> GraphExtractionResult:
-        payload = await self._create_structured_response(
-            name="llm_wiki_graph_extraction",
-            schema=GRAPH_EXTRACTION_JSON_SCHEMA,
-            instructions=_graph_extraction_instructions(self.preferred_language),
-            inputs=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": json.dumps(
-                                {
-                                    "claims": [
-                                        _claim_context_payload(claim)
-                                        for claim in claims
-                                    ]
-                                },
-                                ensure_ascii=False,
-                            ),
-                        }
-                    ],
-                }
-            ],
+        return await self._structured(
+            AgentAnswer,
+            "wiki_agent_answer",
+            _answer_instructions(self.preferred_language),
+            [{"role": "user", "content": content}],
         )
-        return GraphExtractionResult.model_validate(payload)
 
-    async def detect_contradictions(
+    async def _structured(
         self,
-        claims: list[ClaimGraphContext],
-    ) -> ContradictionDetectionResult:
-        payload = await self._create_structured_response(
-            name="llm_wiki_contradiction_detection",
-            schema=CONTRADICTION_DETECTION_JSON_SCHEMA,
-            instructions=_contradiction_detection_instructions(
-                self.preferred_language
-            ),
-            inputs=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": json.dumps(
-                                {
-                                    "claims": [
-                                        _claim_context_payload(claim)
-                                        for claim in claims
-                                    ]
-                                },
-                                ensure_ascii=False,
-                            ),
-                        }
-                    ],
-                }
-            ],
-        )
-        return ContradictionDetectionResult.model_validate(payload)
-
-    async def _create_structured_response(
-        self,
+        output_model: type[StructuredModel],
         name: str,
-        schema: dict[str, object],
         instructions: str,
         inputs: list[dict[str, object]],
-    ) -> dict[str, object]:
+    ) -> tuple[StructuredModel, LLMUsage]:
+        started = time.perf_counter()
         response = await asyncio.to_thread(
             self.client.responses.create,
             model=self.model,
@@ -276,156 +163,138 @@ class OpenAIResponsesClient:
                 "format": {
                     "type": "json_schema",
                     "name": name,
-                    "schema": schema,
+                    "schema": output_model.model_json_schema(),
                     "strict": True,
                 }
             },
             max_output_tokens=self.max_output_tokens,
         )
-        return json.loads(response.output_text)
+        elapsed_ms = round((time.perf_counter() - started) * 1000)
+        usage = getattr(response, "usage", None)
+        return (
+            output_model.model_validate_json(response.output_text),
+            LLMUsage(
+                model=self.model,
+                input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+                output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+                latency_ms=elapsed_ms,
+            ),
+        )
 
 
-def _base64_file_data(path: Path, mime_type: str | None) -> str:
-    guessed_mime = mime_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    encoded = base64.b64encode(path.read_bytes()).decode("utf-8")
-    return f"data:{guessed_mime};base64,{encoded}"
-
-
-def _ingest_instructions(preferred_language: str) -> str:
+def _understand_instructions(preferred_language: str) -> str:
     return (
-        "Bạn là bộ máy ingest cho một LLM Wiki tổng quát. "
-        "Đọc trực tiếp tệp được cung cấp, bao gồm chữ, hình ảnh, bố cục trang, bảng và "
-        "biểu đồ khi có. Trích xuất tri thức bám sát nguồn để lưu vào wiki lâu dài. "
-        "TUYỆT ĐỐI giữ nguyên ngôn ngữ chính của tài liệu cho tiêu đề, tóm tắt, bằng chứng, "
-        "mệnh đề, mô tả thực thể, mục cần rà soát và câu hỏi mở; không tự dịch sang tiếng Anh. "
-        f"Nếu tài liệu không xác định rõ ngôn ngữ, ưu tiên `{preferred_language}`. "
-        "Ưu tiên các mệnh đề nguyên tử, hữu ích và có vị trí bằng chứng hơn tóm tắt chung chung. "
-        "Không bịa dữ kiện. Nội dung mơ hồ phải được đưa vào review_items. "
-        "Có thể dùng mã entity_type ổn định như person, organization, place, product, method, "
-        "concept, event, dataset, metric, file, law, system hoặc other, nhưng description và "
-        "name phải theo ngôn ngữ nguồn. Locator phải ổn định và kiểm tra được, ví dụ "
-        "trang 3, mục 'Kiến trúc', sheet 'Doanh thu'!A1:D20, hình 2 hoặc slide 5. "
-        "Với PDF scan/ảnh, mô tả bằng chứng thị giác và chép lại nội dung đọc được "
-        "tốt nhất có thể. "
-        "Chỉ trả về JSON đúng schema yêu cầu."
+        "You are the understanding phase of a general-purpose Wiki Agent. Read the entire "
+        "raw source using text, visual, table, and layout information available to the model. "
+        "Use purpose.md for direction and schema.md for operating rules. Decide meaning "
+        "yourself; do not assume a domain taxonomy, fixed page types, keyword router, or "
+        "document structure. Compare the source with the current wiki catalog. Return a concise "
+        "decision brief, exact relevant_page_ids from the catalog, and semantic wiki search "
+        "queries needed before editing. Identify "
+        "possible support, qualification, contradiction, duplication, and uncertainty. Do not "
+        "write wiki pages yet and do not expose private chain-of-thought. Preserve the source "
+        f"language; when unclear use {preferred_language}. Return only schema-valid JSON."
     )
 
 
-def _source_prompt(source: SourceRef, preferred_language: str) -> str:
+def _maintain_instructions(preferred_language: str) -> str:
     return (
-        f"Metadata nguồn:\n"
-        f"- source_id: {source.id}\n"
-        f"- tiêu đề: {source.title}\n"
-        f"- loại nguồn: {source.source_type}\n"
-        f"- sha256: {source.sha256}\n"
-        f"- đường dẫn: {source.path}\n"
-        f"- ngôn ngữ ưu tiên khi không xác định được: {preferred_language}\n\n"
-        "Hãy tạo biểu diễn tri thức wiki tốt nhất từ nguồn này. Bao gồm bằng chứng, mệnh đề, "
-        "thực thể, mục cần rà soát và câu hỏi mở quan trọng nhất. Giữ bằng chứng ngắn gọn "
-        "nhưng đủ để trích dẫn về sau. Nếu tài liệu dài, ưu tiên định nghĩa, quan hệ, bảng, "
-        "hình, dữ kiện bền vững, điểm mâu thuẫn và nội dung hữu ích cho truy vấn tương lai. "
-        "Không dịch nội dung sang ngôn ngữ khác."
+        "You are the maintenance phase of a general-purpose Wiki Agent. Integrate the raw "
+        "source into the existing Markdown wiki. Create, update, link, qualify, contradict, or "
+        "request review based on meaning. Prefer updating an existing semantic page over "
+        "creating a duplicate. Page type is an open string. Generated paths must be under "
+        "sources/, pages/, or queries/ and end in .md. For updates and deletes use the exact "
+        "existing page_id. Body is Markdown without YAML frontmatter; the backend renders "
+        "frontmatter. Use [[relative/path.md|label]] wikilinks only when the target exists in "
+        "the supplied pages or is created in this same change set. Every factual addition must "
+        "include source evidence with a verifiable locator and faithful quote or summary. "
+        "Preserve useful existing knowledge and provenance. Never invent facts or identifiers. "
+        "A source summary page should be created or updated for the current source. Put "
+        "ambiguous identity, merge, or contradiction decisions into reviews. Do not use a "
+        "fixed ontology or optimize for one document. Preserve source language; when unclear "
+        f"use {preferred_language}. Return only schema-valid JSON."
     )
 
 
 def _query_plan_instructions(preferred_language: str) -> str:
     return (
-        "Bạn là bộ lập kế hoạch truy vấn cho LLM Wiki tổng quát. "
-        "Chuyển câu hỏi thành kế hoạch retrieval độc lập domain cho SQLite FTS trên evidence, "
-        "claims, entities, relation graph và wiki pages. Giữ từ khóa, gợi ý thực thể và "
-        "câu hỏi con bằng ngôn ngữ của người hỏi để tăng recall; chỉ thêm biến thể ngôn ngữ "
-        "khác khi thực sự giúp tìm tên riêng hoặc thuật ngữ trong nguồn. "
-        f"Nếu không xác định được ngôn ngữ câu hỏi, dùng `{preferred_language}`. "
-        "Trường answer_language phải đúng ngôn ngữ câu hỏi. Không trả lời câu hỏi ở bước này. "
-        "Chỉ trả về JSON đúng schema."
+        "You are the planning step of a Wiki Agent query. Use purpose, overview, and index to "
+        "select exact relevant page IDs from the supplied catalog and request a small set of "
+        "semantic wiki searches. Request only supplied source IDs, and only when raw "
+        "verification is likely necessary. "
+        "Do not answer yet. fast/deep/audit controls effort and verification, not domain "
+        "routing. Do not use a fixed intent taxonomy. Keep searches in the question/source "
+        f"language; when unclear use {preferred_language}. Return only schema-valid JSON."
     )
 
 
-def _evidence_ranking_instructions(max_evidence: int, preferred_language: str) -> str:
+def _answer_instructions(preferred_language: str) -> str:
     return (
-        "Bạn là bộ đánh giá bằng chứng của LLM Wiki bám sát nguồn. "
-        f"Chọn tối đa {max_evidence} evidence_id trực tiếp hoặc hỗ trợ mạnh cho câu hỏi. "
-        "Loại bằng chứng yếu, trùng hoặc lạc đề. Nêu rõ mâu thuẫn và phần bằng chứng còn thiếu. "
-        f"Viết reason/summary theo ngôn ngữ câu hỏi, mặc định `{preferred_language}`. "
-        "Không bịa evidence_id. Chỉ trả về JSON đúng schema."
+        "You are a general-purpose Wiki Agent answering from supplied full wiki pages and "
+        "optional raw source files. Synthesize directly and faithfully. Cite only supplied "
+        "page_id/source_id combinations and locators that support the claim. Distinguish "
+        "absence from incomplete retrieval. Surface relevant qualification, contradiction, "
+        "and uncertainty. If evidence is insufficient, say so. reusable_summary is optional "
+        "and should contain only knowledge worth saving back into the wiki. Answer in the "
+        f"user's language; when unclear use {preferred_language}. Return only schema-valid JSON."
     )
 
 
-def _query_synthesis_instructions(preferred_language: str) -> str:
-    return (
-        "Bạn là bộ tổng hợp câu trả lời cho chatbot LLM Wiki bám sát nguồn. "
-        "Chỉ trả lời từ các bằng chứng đã được chọn. Mọi khẳng định quan trọng phải có citation "
-        "dùng evidence_id được cung cấp. Nếu không đủ bằng chứng, phải nói rõ và đặt confidence "
-        "là insufficient hoặc low. BẮT BUỘC trả lời cùng ngôn ngữ với câu hỏi của người dùng; "
-        f"nếu không xác định được thì dùng `{preferred_language}`. Không tự chuyển câu hỏi "
-        "tiếng Việt sang câu trả lời tiếng Anh. Tách riêng mâu thuẫn và câu hỏi mở, không che "
-        "giấu bất định. Chỉ trả về JSON đúng schema."
-    )
-
-
-def _graph_extraction_instructions(preferred_language: str) -> str:
-    return (
-        "Bạn là bộ trích xuất knowledge graph cho LLM Wiki bám sát nguồn. "
-        "Chuyển các claim context thành bộ ba quan hệ ngắn gọn và chỉ dùng claim_id/evidence_id "
-        "được cung cấp. Giữ nguyên tên thực thể và ngôn ngữ của mệnh đề nguồn. Predicate phải "
-        "là cụm động từ ngắn, nhất quán và có ý nghĩa trong ngôn ngữ nguồn; không ép predicate "
-        f"tiếng Việt sang tiếng Anh. Khi nguồn không rõ ngôn ngữ, dùng `{preferred_language}`. "
-        "Cho phép object literal với số, ngày, metric và văn bản. Không tạo quan hệ không được "
-        "bằng chứng hỗ trợ. Chỉ đề xuất merge candidate khi alias/gần trùng thực sự hợp lý và "
-        "không tự merge. Chỉ trả về JSON đúng schema."
-    )
-
-
-def _contradiction_detection_instructions(preferred_language: str) -> str:
-    return (
-        "Bạn là bộ phát hiện mâu thuẫn cho LLM Wiki bám sát nguồn. So sánh các claims và chỉ "
-        "trả về quan hệ ngữ nghĩa có ý nghĩa giữa từng cặp: contradicts, qualifies, duplicates, "
-        "supports hoặc unrelated. Các mã relationship giữ tiếng Anh để ổn định schema, nhưng "
-        f"reason và notes phải theo ngôn ngữ claims, mặc định `{preferred_language}`. "
-        "Ưu tiên precision cao hơn recall. Không bịa claim_id/evidence_id. "
-        "Chỉ trả về JSON đúng schema."
-    )
-
-
-def _candidate_payload(candidate: EvidenceCandidate) -> dict[str, object]:
+def _source_metadata(source: SourceRef) -> dict[str, object]:
     return {
-        "evidence_id": candidate.evidence_id,
-        "source_id": candidate.source_id,
-        "source_title": candidate.source_title,
-        "source_path": candidate.source_path,
-        "wiki_page_path": candidate.wiki_page_path,
-        "locator": candidate.locator,
-        "modality": candidate.modality,
-        "text": compact_text(candidate.text, 900),
-        "summary": compact_text(candidate.summary, 400),
-        "confidence": candidate.confidence,
-        "claim_ids": candidate.claim_ids,
-        "claims": [compact_text(claim, 400) for claim in candidate.claims],
-        "entities": candidate.entities[:20],
-        "retrieval_score": candidate.retrieval_score,
-        "retrieval_channels": candidate.retrieval_channels,
+        "id": source.id,
+        "title": source.title,
+        "source_type": source.source_type,
+        "sha256": source.sha256,
+        "path": str(source.path),
     }
 
 
-def _claim_context_payload(claim: ClaimGraphContext) -> dict[str, object]:
+def _page_payload(page: WikiPage) -> dict[str, object]:
     return {
-        "claim_id": claim.claim_id,
-        "source_id": claim.source_id,
-        "source_title": claim.source_title,
-        "text": compact_text(claim.text, 700),
-        "subject": claim.subject,
-        "predicate": claim.predicate,
-        "object": claim.object,
-        "status": claim.status,
-        "confidence": claim.confidence,
-        "entities": claim.entities[:30],
-        "evidence": [
+        "id": page.id,
+        "path": str(page.path),
+        "title": page.title,
+        "type": page.page_type,
+        "summary": page.summary,
+        "body": page.body,
+        "status": page.status,
+        "confidence": page.confidence,
+        "evidence": [item.model_dump() for item in page.evidence_refs],
+        "related_page_ids": page.related_page_ids,
+    }
+
+
+def _text_message(payload: dict[str, object]) -> dict[str, object]:
+    return {
+        "role": "user",
+        "content": [
             {
-                "evidence_id": evidence.evidence_id,
-                "locator": evidence.locator,
-                "text": compact_text(evidence.text, 700),
-                "summary": compact_text(evidence.summary, 300),
+                "type": "input_text",
+                "text": json.dumps(payload, ensure_ascii=False),
             }
-            for evidence in claim.evidence[:5]
         ],
+    }
+
+
+def _file_message(path: Path, payload: dict[str, object]) -> dict[str, object]:
+    return {
+        "role": "user",
+        "content": [
+            _file_content(path),
+            {
+                "type": "input_text",
+                "text": json.dumps(payload, ensure_ascii=False),
+            },
+        ],
+    }
+
+
+def _file_content(path: Path) -> dict[str, object]:
+    mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return {
+        "type": "input_file",
+        "filename": path.name,
+        "file_data": f"data:{mime};base64,{encoded}",
     }

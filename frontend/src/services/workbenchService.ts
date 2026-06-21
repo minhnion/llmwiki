@@ -1,11 +1,9 @@
 import type {
-  Contradiction,
-  GraphEntityDetail,
-  GraphBuildResult,
-  GraphVisualization,
   QueryResult,
   SourceIngestResult,
   SourceRef,
+  WikiPage,
+  WikiPageSummary,
 } from "../domain/models";
 import type { ApiClient, QueryInput, UploadSourceInput } from "./apiClient";
 
@@ -13,45 +11,40 @@ export interface WorkbenchGateway {
   listSources(): Promise<SourceRef[]>;
   uploadSource(input: UploadSourceInput): Promise<SourceRef>;
   ingestSource(sourceId: string): Promise<SourceIngestResult>;
-  buildGraph(sourceIds?: string[]): Promise<GraphBuildResult>;
   ask(input: QueryInput): Promise<QueryResult>;
-  graph(query: string): Promise<GraphVisualization>;
-  entity(entityIdOrName: string): Promise<GraphEntityDetail>;
-  contradictions(): Promise<Contradiction[]>;
+  listPages(): Promise<WikiPageSummary[]>;
+  getPage(pageId: string): Promise<WikiPage>;
+  rebuildWiki(): Promise<WikiPageSummary[]>;
 }
 
 export class WorkbenchService implements WorkbenchGateway {
   constructor(private readonly apiClient: ApiClient) {}
 
-  listSources(): Promise<SourceRef[]> {
+  listSources() {
     return this.apiClient.listSources();
   }
 
-  uploadSource(input: UploadSourceInput): Promise<SourceRef> {
+  uploadSource(input: UploadSourceInput) {
     return this.apiClient.uploadSource(input);
   }
 
-  ingestSource(sourceId: string): Promise<SourceIngestResult> {
+  ingestSource(sourceId: string) {
     return this.apiClient.ingestSource(sourceId);
   }
 
-  buildGraph(sourceIds: string[] = []): Promise<GraphBuildResult> {
-    return this.apiClient.buildGraph(sourceIds);
-  }
-
-  ask(input: QueryInput): Promise<QueryResult> {
+  ask(input: QueryInput) {
     return this.apiClient.ask(input);
   }
 
-  graph(query: string): Promise<GraphVisualization> {
-    return this.apiClient.getGraphVisualization(query);
+  listPages() {
+    return this.apiClient.listPages();
   }
 
-  entity(entityIdOrName: string): Promise<GraphEntityDetail> {
-    return this.apiClient.getEntityDetail(entityIdOrName);
+  getPage(pageId: string) {
+    return this.apiClient.getPage(pageId);
   }
 
-  contradictions(): Promise<Contradiction[]> {
-    return this.apiClient.listContradictions();
+  rebuildWiki() {
+    return this.apiClient.rebuildWiki();
   }
 }
